@@ -1,13 +1,13 @@
 # TODO
 
 ## PHASE 0: Project Setup
-- [ ] Create repo (monorepo with `/backend` and `/frontend`, or two repos)
-- [ ] Set up Go module (`go mod init`)
-- [ ] Set up React app (Vite recommended)
+- [X] Create repo (monorepo with `/backend` and `/frontend`, or two repos)
+- [X] Set up Go module (`go mod init`)
+- [X] Set up React app (Vite recommended)
 - [ ] Set up Docker + Docker Compose for local dev (Postgres + API + worker + frontend)
 - [ ] Set up linting/formatting (`gofmt`/`golangci-lint`, ESLint/Prettier)
 - [ ] Set up CI pipeline skeleton (lint + test on push)
-- [ ] Decide on env/config strategy (`.env` files, `envconfig`/`viper`)
+- [X] Decide on env/config strategy (`.env` files, `envconfig`/`viper`)
 
 ## PHASE 1: Database & Backend Skeleton
 - [ ] Provision local Postgres (via Docker Compose)
