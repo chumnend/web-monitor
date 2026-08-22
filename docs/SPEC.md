@@ -11,15 +11,15 @@ Core value prop: Add a URL -> Web Monitor checks it periodically-> user sees liv
 ## Requirements
 
 Product Requirements
-- Let users add/tagorganize websites they care about
-- Periodically check each site's availibity and performance
+- Let users add/tag and organize websites they care about
+- Periodically check each site's availability and performance
 - (OPTIONAL) Present current and historical status in a dashboard
-- (OPTIONAL) Notifiy users when a track site goes down or recovers
+- (OPTIONAL) Notify users when a track site goes down or recovers
 
 Technical Requirements
-- Defualt check types: HTTPS GET with configurable expected status codes (200-399)
+- Default check types: HTTPS GET with configurable expected status codes (200-399)
 - Configurable timeout on check (e.g. 10s default)
-- Retry policy: on failure, one retry before marking as failed (configurable with config)
+- Retry policy: on failure, one retry before marking as failed (configurable with configuration)
 - Store rolled-up status for faster dashboard reads
 - Trigger notifications only on state transitions (up->down, down->up)
 - Channels (v1) email, (v2) Webhook, Push
@@ -29,8 +29,8 @@ Technical Requirements
 
 React/Frontend <----- HTTP/REST (+WebSocket) ---->  Go API Server
 
-API Server: stateless Go service exposing a REST API and optionally WebSocket endpoint for live dashvoard updates
-Scheduler/Worker pool: background Go routines that peridoically ping each site and writes to DB
+API Server: stateless Go service exposing a REST API and optionally WebSocket endpoint for live dashboard updates
+Scheduler/Worker pool: background Go routines that periodically ping each site and writes to DB
 Database: PostgreSQL for persistentce (sites to monitor, users, check history)
 Notifications: asyn work that reacts to state changes (ping tab while open / maybe email user)
 
@@ -65,7 +65,7 @@ Notifications: asyn work that reacts to state changes (ping tab while open / may
 - Config: envconfig or viper
 - Auth: JWT via golang-jwt/jwt
 
-### Data Modela
+### Data Models
 
 users
     id, email, password_hash, created_at
@@ -85,12 +85,12 @@ notifications
 ### API
 
 POST /api/auth/register     Create account
-POST /api/auth/logic        Login, returns JWT
+POST /api/auth/login        Login, returns JWT
 
 GET /api/sites              List user's montiored sites
 POST /api/sites             Add a new site ot monitor
 PUT /api/sites/:id          Update label, tags, check interval
-DELETE /api/site/:id        Stop monitoring a site
+DELETE /api/sites/:id        Stop monitoring a site
 
 GET /api/sites/:id/history  Historical check results
 GET /api/sites/:id/uptime   Uptime stats
