@@ -2,7 +2,7 @@
 
 ## About
 
-Web montior is a web application for tracking the status of websites.
+Web monitor is a web application for tracking the status of websites.
 
 ## Contact
 
