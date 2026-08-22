@@ -1,11 +1,19 @@
-all: build start
+all: build-frontend build start
 
-.PHONY:  build
-build:
-	@echo "Building..."
+.PHONY: build-frontend
+build-frontend:
+	@echo "Building frontend..."
+	@cd frontend && yarn install
+	@cd frontend && yarn build
 	@mkdir -p bin/
+	@cp -r frontend/dist/* bin/
+	@echo "Frontend build complete."
+
+.PHONY: build
+build:
+	@echo "Building backend..."
 	@cd ./bin && go build ../cmd/main.go
-	@echo "Build complete."
+	@echo "Backend build complete."
 
 .PHONY: start
 start:
