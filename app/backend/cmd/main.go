@@ -20,10 +20,6 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	// Serve static files from the current directory (which will be 'bin' when run from the Makefile)
-	fs := http.FileServer(http.Dir("bin"))
-	http.Handle("/", fs)
-
 	// API routes
 	http.HandleFunc("/api/message", apiHandler)
 
