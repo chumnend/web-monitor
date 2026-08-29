@@ -1,0 +1,7 @@
+# Dependencies and Builds
+node_modules/
+dist/
+
+# Docker Related
+Dockerfile
+.dockerignore
