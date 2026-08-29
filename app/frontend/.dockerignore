@@ -4,4 +4,3 @@ dist/
 
 # Docker Related
 Dockerfile
-.dockerignore
