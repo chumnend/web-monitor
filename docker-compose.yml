@@ -25,7 +25,7 @@ services:
     ports:
       - "8081:80"
     depends_on:
-      - web-monitor-backend
+      - backend
 
 volumes:
   db_data:
