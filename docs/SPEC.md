@@ -58,29 +58,96 @@ Notifications: asyn work that reacts to state changes (ping tab while open / may
   - Applies a "failure threshold" (e.g. 2 consecutive failures) before marking a site "down," to avoid false positives from transient blips
 
 ### Suggested Libraries
-- Router: chi or gin
-- DB access: sqlc or pgx directly (avoid heavy ORM for performance/clarity)
+- Router: net/http
+- DB access: sqlc or pgx directly
 - Migrations: golang-migrate
 - Scheduling: simple time.Ticker per site for v1; move to a queue-based system if scaling beyond a few thousand sites
-- Config: envconfig or viper
-- Auth: JWT via golang-jwt/jwt
+- Config: godotenv
+- Auth: golang-jwt/jwt
 
 ### Data Models
 
+-- USERS
 users
-    id, email, password_hash, created_at
+    id                  uuid pk
+    email               text unique not null
+    password_hash       text not null
+    timezone            text default 'UTC'
+    email_verified_at   timestamptz
+    created_at          timestamptz not null default now()
 
+-- SITES (config only — no live status)
 sites
-    id, user_id (fk), url, label, tags text[], is_up
+    id                  uuid pk
+    user_id             uuid fk -> users.id
+    url                 text not null              -- as entered, for display
+    normalized_url      text not null               -- for dedup/uniqueness
+    label               text
+    check_interval_sec  int not null default 60
+    timeout_sec         int not null default 10
+    failure_threshold   int not null default 2      -- consecutive fails before "down"
+    retry_count         int not null default 1
+    expected_status_min int not null default 200
+    expected_status_max int not null default 399
+    created_at          timestamptz not null default now()
+    deleted_at          timestamptz                 -- soft delete
 
+    unique (user_id, normalized_url) where deleted_at is null
+
+-- TAGS (normalized, not array)
+tags
+    id          uuid pk
+    user_id     uuid fk -> users.id
+    name        text not null
+    unique (user_id, name)
+
+site_tags
+    site_id     uuid fk -> sites.id
+    tag_id      uuid fk -> tags.id
+    primary key (site_id, tag_id)
+
+-- CHECK RESULTS (time-series, append-only)
 check_results
-   id, site_id (fk), check_at, status_code, response_time_ms, is_up
+    id                  bigint pk               -- bigint, not uuid: high-volume, sequential-friendly
+    site_id             uuid fk -> sites.id
+    checked_at          timestamptz not null
+    status_code         int
+    response_time_ms    int
+    is_up               boolean not null        -- outcome of THIS check, not site state
+    error_type          text                    -- 'timeout', 'dns', 'tls', 'connection_refused', etc.
+    error_message        text
+    timing_breakdown    jsonb                   -- optional DNS/connect/TLS detail, v2-ready
+    -- partition by range on checked_at (monthly), or move to a rollup table beyond N days
 
+-- SITE STATE (live/current — single source of truth for "is it up right now")
 site_state
-    site_id, current_status, last_checked_at, last_status_change_at, uptime_pct_24h, uptime_pct_30d
+    site_id                 uuid pk fk -> sites.id
+    current_status          text not null check (current_status in ('up','down','pending'))
+    consecutive_failures    int not null default 0
+    last_checked_at         timestamptz
+    last_status_change_at   timestamptz
+    uptime_pct_24h          numeric(5,2)         -- denormalized/cached, refreshed by a job
+    uptime_pct_30d          numeric(5,2)
 
-notifications
-   id, user_id, site_id, type, target, created_at
+-- NOTIFICATION PREFERENCES (per-user config)
+notification_channels
+    id          uuid pk
+    user_id     uuid fk -> users.id
+    site_id     uuid fk -> sites.id nullable     -- null = applies to all sites
+    type        text not null                    -- 'email' | 'webhook' | 'push'
+    target      text not null                    -- email address / webhook URL / push token
+    is_enabled  boolean not null default true
+    created_at  timestamptz not null default now()
+
+-- NOTIFICATION LOG (sent notifications — for debounce + history UI)
+notification_events
+    id              uuid pk
+    site_id         uuid fk -> sites.id
+    channel_id      uuid fk -> notification_channels.id
+    transition      text not null      -- 'up_to_down' | 'down_to_up'
+    sent_at         timestamptz not null default now()
+    delivery_status text                -- 'sent' | 'failed' | 'suppressed_debounce'
+
 
 ### API
 

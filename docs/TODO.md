@@ -11,8 +11,8 @@
 
 ## PHASE 1: Database & Backend Skeleton
 - [X] Provision local Postgres (via Docker Compose)
-- [ ] Set up migrations tool (`golang-migrate`)
-- [ ] Write initial migrations: `users`, `sites`, `check_results`, `site_status`, `notifications`
+- [X] Set up migrations tool (`golang-migrate`)
+- [X] Write initial migrations: `users`, `sites`, `check_results`, `site_status`, `notifications`
 - [ ] Set up DB access layer (`sqlc` or `pgx`)
 - [ ] Write basic health-check endpoint (`GET /api/health`)
 - [ ] Set up router (`chi`/`gin`) and middleware chain (logging, recovery, CORS)
