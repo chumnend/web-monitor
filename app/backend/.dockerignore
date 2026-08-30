@@ -1,1 +1,9 @@
+# Build files
+bin
+
+# Docker related files
 Dockerfile
+
+# Env files
+.env
+.env.*

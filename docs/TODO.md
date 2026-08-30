@@ -10,7 +10,7 @@
 - [X] Decide on env/config strategy (`.env` files, `envconfig`/`viper`)
 
 ## PHASE 1: Database & Backend Skeleton
-- [ ] Provision local Postgres (via Docker Compose)
+- [X] Provision local Postgres (via Docker Compose)
 - [ ] Set up migrations tool (`golang-migrate`)
 - [ ] Write initial migrations: `users`, `sites`, `check_results`, `site_status`, `notifications`
 - [ ] Set up DB access layer (`sqlc` or `pgx`)
