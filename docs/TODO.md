@@ -4,7 +4,7 @@
 - [X] Create repo (monorepo with `/backend` and `/frontend`, or two repos)
 - [X] Set up Go module (`go mod init`)
 - [X] Set up React app (Vite recommended)
-- [ ] Set up Docker + Docker Compose for local dev (Postgres + API + worker + frontend)
+- [X] Set up Docker + Docker Compose for local dev
 - [ ] Set up linting/formatting (`gofmt`/`golangci-lint`, ESLint/Prettier)
 - [ ] Set up CI pipeline skeleton (lint + test on push)
 - [X] Decide on env/config strategy (`.env` files, `envconfig`/`viper`)
