@@ -22,3 +22,22 @@ clean:
 	@echo "Cleaning binaries..."
 	@rm -rf bin
 	@echo "Clean complete."
+
+.PHONY: build-migrations
+build-migrations:
+	@echo "Building migration tools..."
+	@go build -o bin/migrate-up cmd/up/main.go
+	@go build -o bin/migrate-down cmd/down/main.go
+	@echo "Migration tools built."
+
+.PHONY: migrate-up
+migrate-up: build-migrations
+	@echo "Applying database migrations (up)..."
+	@./bin/migrate-up
+	@echo "Migrations up complete."
+
+.PHONY: migrate-down
+migrate-down: build-migrations
+	@echo "Rolling back database migrations (down)..."
+	@./bin/migrate-down
+	@echo "Migrations down complete."
