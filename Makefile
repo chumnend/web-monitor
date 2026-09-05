@@ -1,16 +1,14 @@
-start: 
-	docker compose up -d --build
+start:
+	docker compose start
 
 stop:
 	docker compose stop
 
-restart: stop start
+up: 
+	docker compose up -d --build
 
 down:
 	docker compose down
-
-logs:
-	docker compose logs -f
 
 # Danger zone: nukes volumes too (wipes DB data)
 clean:

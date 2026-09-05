@@ -11,15 +11,18 @@ import (
 )
 
 func main() {
-	// Load .env file
+	// Attempt to load .env file. This is for local development.
+	// In a container, PG_URL is expected to be set as an environment variable directly.
 	err := godotenv.Load(".env")
-	if err != nil {
-		log.Fatalf("Error loading .env file: %v", err)
+	if err != nil && !os.IsNotExist(err) {
+		// If the error is NOT 'file does not exist', then it's a real loading error
+		log.Printf("Warning: Could not load .env file (non-existence is okay): %v", err)
 	}
 
+	// PG_URL is expected to be set as an environment variable (either from .env or Dockerfile/system)
 	pgURL := os.Getenv("PG_URL")
 	if pgURL == "" {
-		log.Fatal("PG_URL not set in .env file")
+		log.Fatal("PG_URL not set as environment variable. Please set it in .env or Dockerfile.")
 	}
 
 	migrationsPath := "./migrations"

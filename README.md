@@ -7,7 +7,9 @@ Web monitor is a web application for tracking the status of websites.
 
 ## Getting Started
 
-1) Use `make start` to use Docker Compose to launch services
+1) Use `make up` to use Docker Compose to launch services
+
+2) API is deployed on port localhost:8080, Web App is deployed on port localhost:8081
 
 ## Contact
 
