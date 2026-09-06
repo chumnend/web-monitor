@@ -2,10 +2,10 @@ all: build start
 
 .PHONY: build
 build:
-	@echo "Building..."
+	@echo "Building application..."
 	@mkdir -p bin/
 	@go build -o bin/api cmd/api/main.go
-	@echo "Build complete."
+	@echo "App built."
 
 .PHONY: start
 start:
@@ -26,8 +26,8 @@ clean:
 .PHONY: build-migrations
 build-migrations:
 	@echo "Building migration tools..."
-	@go build -o bin/migrate-up cmd/up/main.go
-	@go build -o bin/migrate-down cmd/down/main.go
+	@go build -o bin/migrate-up cmd/migrate-up/main.go
+	@go build -o bin/migrate-down cmd/migrate-down/main.go
 	@echo "Migration tools built."
 
 .PHONY: migrate-up
