@@ -18,7 +18,7 @@ services:
       - db
     environment:
       DATABASE_URL: postgres://user:password@db:5432/web_monitor_db
-    entrypoint: sh -c "cd /app/backend && make migrate-up && /app/backend/bin/main"
+    entrypoint: sh -c "cd /app/backend && make migrate-up && /app/backend/bin/api"
 
   frontend:
     build:

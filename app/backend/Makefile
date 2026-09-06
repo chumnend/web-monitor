@@ -4,13 +4,13 @@ all: build start
 build:
 	@echo "Building..."
 	@mkdir -p bin/
-	@cd ./bin && go build ../cmd/main.go
+	@go build -o bin/api cmd/api/main.go
 	@echo "Build complete."
 
 .PHONY: start
 start:
 	@echo "Executing..."
-	@./bin/main
+	@./bin/api
 
 .PHONY: test
 test:
