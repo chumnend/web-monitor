@@ -1,3 +1,7 @@
+.PHONY: start stop up down clean clean-all
+
+all: up
+
 start:
 	docker compose start
 
