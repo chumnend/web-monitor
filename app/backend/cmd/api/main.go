@@ -1,9 +1,11 @@
 package main
 
 import (
+	"log"
 	"web-monitor/internal/api"
 )
 
 func main() {
-	api.HandleRequests()
+	client := api.NewAPIClient()
+	log.Fatal(client.Start("8080"))
 }

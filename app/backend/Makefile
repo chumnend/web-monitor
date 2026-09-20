@@ -14,8 +14,8 @@ start:
 
 .PHONY: test
 test:
-	@echo "Testing cmd/..."
-	@go test ./cmd/
+	@echo "Testing internal/..."
+	@go test -cover ./internal/...
 
 .PHONY: clean
 clean:
