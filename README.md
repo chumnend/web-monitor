@@ -4,7 +4,6 @@
 
 Web monitor is a web application for tracking the status of websites.
 
-
 ## Getting Started
 
 1) Use `make up` to use Docker Compose to launch services
