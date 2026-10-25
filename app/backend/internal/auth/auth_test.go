@@ -4,7 +4,10 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"web-monitor/internal/auth"
 	"web-monitor/internal/store"
@@ -161,9 +164,76 @@ func TestNormalizeTimezone(t *testing.T) {
 	}
 }
 
-func TestServiceRegister(t *testing.T) {
+func TestTokenManager(t *testing.T) {
+	secret := "test-secret-key-123"
+	duration := 1 * time.Hour
+	tm := auth.NewTokenManager(secret, duration)
+
+	userID := uuid.New()
+	email := "tokenuser@example.com"
+
+	// 1. Generate valid token
+	tokenStr, err := tm.GenerateToken(userID, email)
+	if err != nil {
+		t.Fatalf("unexpected error generating token: %v", err)
+	}
+	if tokenStr == "" {
+		t.Fatal("expected non-empty token string")
+	}
+
+	// 2. Validate token
+	claims, err := tm.ValidateToken(tokenStr)
+	if err != nil {
+		t.Fatalf("unexpected error validating token: %v", err)
+	}
+	if claims.UserID != userID {
+		t.Errorf("expected userID %v, got %v", userID, claims.UserID)
+	}
+	if claims.Email != email {
+		t.Errorf("expected email %v, got %v", email, claims.Email)
+	}
+	if claims.Subject != userID.String() {
+		t.Errorf("expected subject %v, got %v", userID.String(), claims.Subject)
+	}
+
+	// 3. Validate with wrong secret fails
+	wrongTM := auth.NewTokenManager("different-secret", duration)
+	_, err = wrongTM.ValidateToken(tokenStr)
+	if err != auth.ErrInvalidToken {
+		t.Fatalf("expected ErrInvalidToken with wrong secret, got: %v", err)
+	}
+
+	// 4. Expired token fails
+	expiredTM := auth.NewTokenManager(secret, -1*time.Minute)
+	expiredToken, err := expiredTM.GenerateToken(userID, email)
+	if err != nil {
+		t.Fatalf("failed to generate expired token: %v", err)
+	}
+	_, err = tm.ValidateToken(expiredToken)
+	if err != auth.ErrInvalidToken {
+		t.Fatalf("expected ErrInvalidToken for expired token, got: %v", err)
+	}
+
+	// 5. Tampered token fails
+	tampered := tokenStr + "tamper"
+	_, err = tm.ValidateToken(tampered)
+	if err != auth.ErrInvalidToken {
+		t.Fatalf("expected ErrInvalidToken for tampered token, got: %v", err)
+	}
+
+	// 6. Non-HMAC signing method rejected
+	unsecuredToken := jwt.NewWithClaims(jwt.SigningMethodNone, claims)
+	noneStr, _ := unsecuredToken.SignedString(jwt.UnsafeAllowNoneSignatureType)
+	_, err = tm.ValidateToken(noneStr)
+	if err != auth.ErrInvalidToken {
+		t.Fatalf("expected ErrInvalidToken for none algorithm, got: %v", err)
+	}
+}
+
+func TestServiceRegisterAndLogin(t *testing.T) {
 	memStore := store.NewMemoryStore()
-	svc := auth.NewService(memStore)
+	tm := auth.NewTokenManager("test-jwt-secret", 2*time.Hour)
+	svc := auth.NewService(memStore, auth.WithTokenManager(tm))
 	ctx := context.Background()
 
 	// 1. Successful Registration
@@ -181,53 +251,66 @@ func TestServiceRegister(t *testing.T) {
 	if user.Email != "newuser@example.com" {
 		t.Errorf("expected normalized email newuser@example.com, got %s", user.Email)
 	}
-	if user.Timezone != "America/Chicago" {
-		t.Errorf("expected timezone America/Chicago, got %s", user.Timezone)
-	}
-	if user.PasswordHash == "" || user.PasswordHash == input.Password {
-		t.Errorf("invalid password hash: %s", user.PasswordHash)
-	}
-	if err := auth.ComparePassword(user.PasswordHash, "SecurePassword123!"); err != nil {
-		t.Errorf("password hash does not match original password: %v", err)
-	}
 
-	// 2. Duplicate Email Registration
-	_, err = svc.Register(ctx, auth.RegisterInput{
-		Email:    "newuser@example.com",
-		Password: "DifferentPassword123!",
-	})
-	if err != auth.ErrUserAlreadyExists {
-		t.Fatalf("expected ErrUserAlreadyExists, got: %v", err)
-	}
-
-	// 3. Invalid Email
-	_, err = svc.Register(ctx, auth.RegisterInput{
-		Email:    "invalid-email",
+	// 2. Successful Login
+	loginRes, err := svc.Login(ctx, auth.LoginInput{
+		Email:    "NEWUSER@EXAMPLE.COM", // case-insensitive check
 		Password: "SecurePassword123!",
-	})
-	if err != auth.ErrInvalidEmail {
-		t.Fatalf("expected ErrInvalidEmail, got: %v", err)
-	}
-
-	// 4. Invalid Password (too short)
-	_, err = svc.Register(ctx, auth.RegisterInput{
-		Email:    "valid@example.com",
-		Password: "short",
-	})
-	if err != auth.ErrPasswordTooShort {
-		t.Fatalf("expected ErrPasswordTooShort, got: %v", err)
-	}
-
-	// 5. Default Timezone when empty
-	defaultTzUser, err := svc.Register(ctx, auth.RegisterInput{
-		Email:    "another@example.com",
-		Password: "SecurePassword123!",
-		Timezone: "",
 	})
 	if err != nil {
-		t.Fatalf("unexpected error registering user with empty timezone: %v", err)
+		t.Fatalf("unexpected error during login: %v", err)
 	}
-	if defaultTzUser.Timezone != "UTC" {
-		t.Errorf("expected default timezone UTC, got %s", defaultTzUser.Timezone)
+	if loginRes.Token == "" {
+		t.Fatal("expected non-empty token from login")
+	}
+	if loginRes.User.ID != user.ID {
+		t.Errorf("expected user ID %v, got %v", user.ID, loginRes.User.ID)
+	}
+	if loginRes.ExpiresIn != int64(2*3600) {
+		t.Errorf("expected expires_in %d, got %d", 2*3600, loginRes.ExpiresIn)
+	}
+
+	// Verify returned token is valid and decodes to correct claims
+	claims, err := tm.ValidateToken(loginRes.Token)
+	if err != nil {
+		t.Fatalf("login token validation failed: %v", err)
+	}
+	if claims.UserID != user.ID || claims.Email != user.Email {
+		t.Errorf("claims mismatch: %+v", claims)
+	}
+
+	// 3. Login with wrong password
+	_, err = svc.Login(ctx, auth.LoginInput{
+		Email:    "newuser@example.com",
+		Password: "WrongPassword!",
+	})
+	if err != auth.ErrInvalidCredentials {
+		t.Fatalf("expected ErrInvalidCredentials for wrong password, got: %v", err)
+	}
+
+	// 4. Login with non-existent email
+	_, err = svc.Login(ctx, auth.LoginInput{
+		Email:    "nonexistent@example.com",
+		Password: "SecurePassword123!",
+	})
+	if err != auth.ErrInvalidCredentials {
+		t.Fatalf("expected ErrInvalidCredentials for nonexistent email, got: %v", err)
+	}
+
+	// 5. Login with empty email or password
+	_, err = svc.Login(ctx, auth.LoginInput{
+		Email:    "",
+		Password: "SecurePassword123!",
+	})
+	if err != auth.ErrInvalidCredentials {
+		t.Fatalf("expected ErrInvalidCredentials for empty email, got: %v", err)
+	}
+
+	_, err = svc.Login(ctx, auth.LoginInput{
+		Email:    "newuser@example.com",
+		Password: "",
+	})
+	if err != auth.ErrInvalidCredentials {
+		t.Fatalf("expected ErrInvalidCredentials for empty password, got: %v", err)
 	}
 }

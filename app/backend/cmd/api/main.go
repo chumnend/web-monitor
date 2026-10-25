@@ -26,7 +26,16 @@ func main() {
 		pgURL = os.Getenv("DATABASE_URL")
 	}
 
+	secretKey := os.Getenv("SECRET_KEY")
+	if secretKey == "" {
+		secretKey = os.Getenv("JWT_SECRET")
+	}
+
 	var opts []api.Option
+	if secretKey != "" {
+		opts = append(opts, api.WithSecretKey(secretKey))
+	}
+
 	if pgURL != "" {
 		db, err := sql.Open("postgres", pgURL)
 		if err != nil {

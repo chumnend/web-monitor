@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"web-monitor/internal/auth"
 	"web-monitor/internal/store"
@@ -14,35 +15,57 @@ type APIClient struct {
 	authService *auth.Service
 }
 
-type Option func(*APIClient)
+type clientConfig struct {
+	store       store.Store
+	authService *auth.Service
+	secretKey   string
+}
 
-// WithStore sets the store and creates an auth service for the APIClient.
+type Option func(*clientConfig)
+
+// WithStore sets the store for the APIClient.
 func WithStore(s store.Store) Option {
-	return func(c *APIClient) {
-		c.store = s
-		c.authService = auth.NewService(s)
+	return func(cfg *clientConfig) {
+		cfg.store = s
 	}
 }
 
 // WithAuthService sets a custom auth service for the APIClient.
 func WithAuthService(svc *auth.Service) Option {
-	return func(c *APIClient) {
-		c.authService = svc
+	return func(cfg *clientConfig) {
+		cfg.authService = svc
+	}
+}
+
+// WithSecretKey configures the JWT secret key for token issuance.
+func WithSecretKey(secretKey string) Option {
+	return func(cfg *clientConfig) {
+		cfg.secretKey = secretKey
 	}
 }
 
 func NewAPIClient(opts ...Option) *APIClient {
-	client := &APIClient{}
+	cfg := &clientConfig{}
 	for _, opt := range opts {
-		opt(client)
+		opt(cfg)
 	}
-	if client.store == nil {
-		client.store = store.NewMemoryStore()
+
+	if cfg.store == nil {
+		cfg.store = store.NewMemoryStore()
 	}
-	if client.authService == nil {
-		client.authService = auth.NewService(client.store)
+
+	if cfg.authService == nil {
+		var svcOpts []func(*auth.Service)
+		if cfg.secretKey != "" {
+			svcOpts = append(svcOpts, auth.WithTokenManager(auth.NewTokenManager(cfg.secretKey, 24*time.Hour)))
+		}
+		cfg.authService = auth.NewService(cfg.store, svcOpts...)
 	}
-	return client
+
+	return &APIClient{
+		store:       cfg.store,
+		authService: cfg.authService,
+	}
 }
 
 func (client *APIClient) corsMiddleware(next http.Handler) http.Handler {
@@ -64,6 +87,7 @@ func (client *APIClient) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", sayHello)
 	mux.HandleFunc("POST /api/auth/register", client.handleRegister)
+	mux.HandleFunc("POST /api/auth/login", client.handleLogin)
 	return client.corsMiddleware(mux)
 }
 

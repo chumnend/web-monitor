@@ -18,6 +18,12 @@ type RegisterRequest struct {
 	Timezone string `json:"timezone,omitempty"`
 }
 
+// LoginRequest defines the expected JSON payload for user login.
+type LoginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
 // UserResponse represents a user safe for public API responses (no password hash).
 type UserResponse struct {
 	ID              uuid.UUID  `json:"id"`
@@ -31,6 +37,13 @@ type UserResponse struct {
 type RegisterResponse struct {
 	User    UserResponse `json:"user"`
 	Message string       `json:"message"`
+}
+
+// LoginResponse represents the response body returned upon successful login.
+type LoginResponse struct {
+	Token     string       `json:"token"`
+	User      UserResponse `json:"user"`
+	ExpiresIn int64        `json:"expires_in"`
 }
 
 // ErrorResponse represents a standardized API error response.
@@ -91,5 +104,44 @@ func (client *APIClient) handleRegister(w http.ResponseWriter, r *http.Request) 
 			CreatedAt:       user.CreatedAt,
 		},
 		Message: "User registered successfully",
+	})
+}
+
+func (client *APIClient) handleLogin(w http.ResponseWriter, r *http.Request) {
+	ct := r.Header.Get("Content-Type")
+	if ct != "" && !strings.Contains(ct, "application/json") {
+		writeError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+		return
+	}
+
+	var req LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+
+	result, err := client.authService.Login(r.Context(), auth.LoginInput{
+		Email:    req.Email,
+		Password: req.Password,
+	})
+	if err != nil {
+		if errors.Is(err, auth.ErrInvalidCredentials) {
+			writeError(w, http.StatusUnauthorized, "Invalid email or password")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, LoginResponse{
+		Token: result.Token,
+		User: UserResponse{
+			ID:              result.User.ID,
+			Email:           result.User.Email,
+			Timezone:        result.User.Timezone,
+			EmailVerifiedAt: result.User.EmailVerifiedAt,
+			CreatedAt:       result.User.CreatedAt,
+		},
+		ExpiresIn: result.ExpiresIn,
 	})
 }
