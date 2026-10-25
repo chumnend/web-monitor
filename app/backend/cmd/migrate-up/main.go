@@ -35,9 +35,9 @@ func main() {
 		log.Fatalf("Could not create migrate instance: %v", err)
 	}
 
-	if err = m.Down(); err != nil && err != migrate.ErrNoChange {
+	if err = m.Up(); err != nil && err != migrate.ErrNoChange {
 		log.Fatalf("An error occurred while syncing the database: %v", err)
 	}
 
-	log.Println("Database migrations rolled back successfully!")
+	log.Println("Database migrations applied successfully!")
 }
