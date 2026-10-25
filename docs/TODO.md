@@ -19,7 +19,7 @@
 - [ ] Set up structured logging (`zap`/`zerolog`/`log`)
 
 ## PHASE 2: Authentication
-- [ ] Implement user registration (hash password with bcrypt/argon2)
+- [X] Implement user registration (hash password with bcrypt/argon2)
 - [ ] Implement login (issue JWT)
 - [ ] Implement auth middleware (validate JWT, attach user to request context)
 - [ ] Implement refresh token flow
