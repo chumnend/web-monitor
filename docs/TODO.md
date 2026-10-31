@@ -24,7 +24,6 @@
 - [X] Implement auth middleware (validate JWT, attach user to request context)
 - [X] Implement refresh token flow
 - [ ] Add rate limiting to auth endpoints
-- [ ] Write tests for auth flows
 
 ## PHASE 3: Sites CRUD
 - [ ] `POST /api/sites` — add a site (validate URL, set defaults)
@@ -32,7 +31,6 @@
 - [ ] `PATCH /api/sites/:id` — update label/tags/check interval
 - [ ] `DELETE /api/sites/:id` — remove/stop monitoring a site
 - [ ] Add tagging support (join table or array column)
-- [ ] Write tests for sites CRUD + authorization (users can't touch others' sites)
 
 ## PHASE 4: Checker Engine
 - [ ] Build core HTTP probe function (GET/HEAD, timeout, expected status range)
@@ -43,7 +41,6 @@
 - [ ] Write check results to `check_results` table
 - [ ] Update denormalized `site_status` table on each check
 - [ ] Handle graceful shutdown (in-flight checks finish before worker exits)
-- [ ] Write tests for checker logic (mock HTTP server for various failure modes)
 
 ## PHASE 5: Status & History API
 - [ ] `GET /api/sites/:id/history` — paginated check results
@@ -57,7 +54,6 @@
 - [ ] Implement email channel (e.g. via SMTP or a provider like SES/Postmark)
 - [ ] Add debounce/rate-limiting to avoid notification storms
 - [ ] `POST/GET /api/notifications` — manage notification preferences
-- [ ] Write tests for transition detection + dispatch
 
 ## PHASE 7: Real-time Updates (optional)
 - [ ] Decide: WebSocket vs SSE vs polling-only
