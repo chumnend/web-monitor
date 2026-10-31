@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -15,6 +14,7 @@ type APIClient struct {
 	authService    *auth.Service
 	authMiddleware *auth.Middleware
 	rateLimiter    *auth.RateLimiter
+	startTime      time.Time
 }
 
 type clientConfig struct {
@@ -93,6 +93,7 @@ func NewAPIClient(opts ...Option) *APIClient {
 		authService:    cfg.authService,
 		authMiddleware: cfg.authMiddleware,
 		rateLimiter:    cfg.rateLimiter,
+		startTime:      time.Now().UTC(),
 	}
 }
 
@@ -138,7 +139,7 @@ func (client *APIClient) corsMiddleware(next http.Handler) http.Handler {
 
 func (client *APIClient) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/health", sayHello)
+	mux.HandleFunc("GET /api/health", client.handleHealth)
 	mux.Handle("POST /api/auth/register", client.RateLimit(http.HandlerFunc(client.handleRegister)))
 	mux.Handle("POST /api/auth/login", client.RateLimit(http.HandlerFunc(client.handleLogin)))
 	mux.Handle("POST /api/auth/refresh", client.RateLimit(http.HandlerFunc(client.handleRefresh)))
@@ -149,15 +150,4 @@ func (client *APIClient) Handler() http.Handler {
 func (client APIClient) Start(port string) error {
 	fmt.Printf("Server starting on port %s...\n", port)
 	return http.ListenAndServe(":"+port, client.Handler())
-}
-
-type MessageResponse struct {
-	Message string `json:"message"`
-}
-
-func sayHello(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	response := MessageResponse{Message: "OK"}
-	json.NewEncoder(w).Encode(response)
 }

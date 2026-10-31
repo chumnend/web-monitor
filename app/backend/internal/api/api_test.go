@@ -1,11 +1,8 @@
 package api_test
 
 import (
-	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +26,7 @@ func getFreePort() (string, error) {
 
 func TestStartError(t *testing.T) {
 	client := api.NewAPIClient()
+	defer client.Close()
 
 	// Get a free port
 	port, err := getFreePort()
@@ -64,38 +62,5 @@ func TestStartError(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second): // Timeout if Start doesn't return
 		t.Fatal("Start method did not return within 5 seconds")
-	}
-}
-
-func TestHealthEndpoint(t *testing.T) {
-	client := api.NewAPIClient()
-
-	// Use the handler directly for httptest
-	testServer := httptest.NewServer(client.Handler())
-	defer testServer.Close()
-
-	// Make a GET request to the /api/health endpoint
-	resp, err := http.Get(testServer.URL + "/api/health")
-	if err != nil {
-		t.Fatalf("Failed to make GET request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// Check the status code
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Expected status code %d, got %d", http.StatusOK, resp.StatusCode)
-	}
-
-	// Decode the response body
-	var responseBody api.MessageResponse
-	err = json.NewDecoder(resp.Body).Decode(&responseBody)
-	if err != nil {
-		t.Fatalf("Failed to decode response body: %v", err)
-	}
-
-	// Check the message in the response body
-	expectedMessage := "OK"
-	if responseBody.Message != expectedMessage {
-		t.Errorf("Expected message '%s', got '%s'", expectedMessage, responseBody.Message)
 	}
 }

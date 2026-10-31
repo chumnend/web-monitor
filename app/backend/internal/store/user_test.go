@@ -15,6 +15,11 @@ import (
 func runUserStoreTests(t *testing.T, s store.Store) {
 	ctx := context.Background()
 
+	// 0. Ping
+	if err := s.Ping(ctx); err != nil {
+		t.Fatalf("store ping failed: %v", err)
+	}
+
 	// 1. Create User
 	id := uuid.New()
 	email := "test-" + id.String()[:8] + "@example.com"

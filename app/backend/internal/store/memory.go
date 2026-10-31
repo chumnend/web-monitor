@@ -25,6 +25,11 @@ func NewMemoryStore() *MemoryStore {
 	}
 }
 
+// Ping verifies that the memory store is operational.
+func (m *MemoryStore) Ping(_ context.Context) error {
+	return nil
+}
+
 // CreateUser creates a new user in memory.
 func (m *MemoryStore) CreateUser(_ context.Context, user *User) error {
 	if user == nil {

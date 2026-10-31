@@ -26,6 +26,11 @@ func (s *PostgresStore) DB() *sql.DB {
 	return s.db
 }
 
+// Ping verifies that the database connection is alive.
+func (s *PostgresStore) Ping(ctx context.Context) error {
+	return s.db.PingContext(ctx)
+}
+
 // CreateUser inserts a new user record into the users table.
 func (s *PostgresStore) CreateUser(ctx context.Context, user *User) error {
 	if user == nil {
