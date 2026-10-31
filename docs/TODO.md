@@ -13,10 +13,8 @@
 - [X] Provision local Postgres (via Docker Compose)
 - [X] Set up migrations tool (`golang-migrate`)
 - [X] Write initial migrations: `users`, `sites`, `check_results`, `site_status`, `notifications`
-- [ ] Set up DB access layer (`sqlc` or `pgx`)
 - [X] Write basic health-check endpoint (`GET /api/health`)
 - [X] Set up router (`chi`/`gin`/`http`) and middleware chain (logging, recovery, CORS)
-- [ ] Set up structured logging (`zap`/`zerolog`/`log`)
 
 ## PHASE 2: Authentication
 - [X] Implement user registration (hash password with bcrypt/argon2)
