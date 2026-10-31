@@ -14,12 +14,14 @@ type APIClient struct {
 	store          store.Store
 	authService    *auth.Service
 	authMiddleware *auth.Middleware
+	rateLimiter    *auth.RateLimiter
 }
 
 type clientConfig struct {
 	store          store.Store
 	authService    *auth.Service
 	authMiddleware *auth.Middleware
+	rateLimiter    *auth.RateLimiter
 	secretKey      string
 }
 
@@ -43,6 +45,13 @@ func WithAuthService(svc *auth.Service) Option {
 func WithAuthMiddleware(m *auth.Middleware) Option {
 	return func(cfg *clientConfig) {
 		cfg.authMiddleware = m
+	}
+}
+
+// WithRateLimiter sets a custom rate limiter for the APIClient.
+func WithRateLimiter(rl *auth.RateLimiter) Option {
+	return func(cfg *clientConfig) {
+		cfg.rateLimiter = rl
 	}
 }
 
@@ -75,10 +84,22 @@ func NewAPIClient(opts ...Option) *APIClient {
 		cfg.authMiddleware = cfg.authService.Middleware()
 	}
 
+	if cfg.rateLimiter == nil {
+		cfg.rateLimiter = auth.NewRateLimiter(60, time.Minute)
+	}
+
 	return &APIClient{
 		store:          cfg.store,
 		authService:    cfg.authService,
 		authMiddleware: cfg.authMiddleware,
+		rateLimiter:    cfg.rateLimiter,
+	}
+}
+
+// Close releases resources held by APIClient (e.g. background janitors).
+func (client *APIClient) Close() {
+	if client.rateLimiter != nil {
+		client.rateLimiter.Close()
 	}
 }
 
@@ -90,6 +111,14 @@ func (client *APIClient) RequireAuth(next http.Handler) http.Handler {
 // RequireAuthFunc wraps an http.HandlerFunc with JWT authentication middleware.
 func (client *APIClient) RequireAuthFunc(fn http.HandlerFunc) http.HandlerFunc {
 	return client.authMiddleware.WrapFunc(fn)
+}
+
+// RateLimit wraps an http.Handler with rate limiting middleware.
+func (client *APIClient) RateLimit(next http.Handler) http.Handler {
+	if client.rateLimiter == nil {
+		return next
+	}
+	return client.rateLimiter.Middleware(next)
 }
 
 func (client *APIClient) corsMiddleware(next http.Handler) http.Handler {
@@ -110,9 +139,9 @@ func (client *APIClient) corsMiddleware(next http.Handler) http.Handler {
 func (client *APIClient) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", sayHello)
-	mux.HandleFunc("POST /api/auth/register", client.handleRegister)
-	mux.HandleFunc("POST /api/auth/login", client.handleLogin)
-	mux.HandleFunc("POST /api/auth/refresh", client.handleRefresh)
+	mux.Handle("POST /api/auth/register", client.RateLimit(http.HandlerFunc(client.handleRegister)))
+	mux.Handle("POST /api/auth/login", client.RateLimit(http.HandlerFunc(client.handleLogin)))
+	mux.Handle("POST /api/auth/refresh", client.RateLimit(http.HandlerFunc(client.handleRefresh)))
 	mux.Handle("GET /api/auth/me", client.RequireAuth(http.HandlerFunc(client.handleMe)))
 	return client.corsMiddleware(mux)
 }

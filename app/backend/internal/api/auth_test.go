@@ -655,4 +655,173 @@ func TestRefreshEndpointInvalid(t *testing.T) {
 	}
 }
 
+func TestAuthRateLimiting(t *testing.T) {
+	memStore := store.NewMemoryStore()
+	limiter := auth.NewRateLimiter(2, 1*time.Minute)
+	defer limiter.Close()
+
+	client := api.NewAPIClient(api.WithStore(memStore), api.WithRateLimiter(limiter))
+	defer client.Close()
+	server := httptest.NewServer(client.Handler())
+	defer server.Close()
+
+	loginPayload := `{"email":"test@example.com","password":"badpassword"}`
+
+	// 1st request -> 401 Unauthorized (allowed by rate limiter)
+	resp1, err := http.Post(server.URL+"/api/auth/login", "application/json", bytes.NewBufferString(loginPayload))
+	if err != nil {
+		t.Fatalf("first request failed: %v", err)
+	}
+	defer resp1.Body.Close()
+	if resp1.StatusCode != http.StatusUnauthorized {
+		t.Errorf("req 1: expected 401, got %d", resp1.StatusCode)
+	}
+	if resp1.Header.Get("X-RateLimit-Remaining") != "1" {
+		t.Errorf("req 1: expected remaining 1, got %s", resp1.Header.Get("X-RateLimit-Remaining"))
+	}
+
+	// 2nd request -> 401 Unauthorized (allowed by rate limiter)
+	resp2, err := http.Post(server.URL+"/api/auth/login", "application/json", bytes.NewBufferString(loginPayload))
+	if err != nil {
+		t.Fatalf("second request failed: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusUnauthorized {
+		t.Errorf("req 2: expected 401, got %d", resp2.StatusCode)
+	}
+	if resp2.Header.Get("X-RateLimit-Remaining") != "0" {
+		t.Errorf("req 2: expected remaining 0, got %s", resp2.Header.Get("X-RateLimit-Remaining"))
+	}
+
+	// 3rd request -> 429 Too Many Requests
+	resp3, err := http.Post(server.URL+"/api/auth/login", "application/json", bytes.NewBufferString(loginPayload))
+	if err != nil {
+		t.Fatalf("third request failed: %v", err)
+	}
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("req 3: expected 429, got %d", resp3.StatusCode)
+	}
+	if resp3.Header.Get("Retry-After") == "" {
+		t.Error("expected Retry-After header on 429")
+	}
+
+	var errRes api.ErrorResponse
+	if err := json.NewDecoder(resp3.Body).Decode(&errRes); err != nil {
+		t.Fatalf("failed to decode error: %v", err)
+	}
+	if errRes.Error != "Too many requests, please try again later" {
+		t.Errorf("unexpected error message: %s", errRes.Error)
+	}
+}
+
+func TestFullAuthFlowLifecycle(t *testing.T) {
+	memStore := store.NewMemoryStore()
+	client := api.NewAPIClient(api.WithStore(memStore), api.WithSecretKey("super-secret-lifecycle-test-key"))
+	defer client.Close()
+	server := httptest.NewServer(client.Handler())
+	defer server.Close()
+
+	email := "lifecycle@example.com"
+	password := "SecurePass123!"
+
+	// Step 1: Registration
+	regBody, _ := json.Marshal(map[string]string{
+		"email":    email,
+		"password": password,
+		"timezone": "Europe/London",
+	})
+	regResp, err := http.Post(server.URL+"/api/auth/register", "application/json", bytes.NewReader(regBody))
+	if err != nil {
+		t.Fatalf("step 1 register failed: %v", err)
+	}
+	defer regResp.Body.Close()
+	if regResp.StatusCode != http.StatusCreated {
+		t.Fatalf("step 1 register status %d", regResp.StatusCode)
+	}
+
+	// Step 2: Login
+	loginBody, _ := json.Marshal(map[string]string{
+		"email":    email,
+		"password": password,
+	})
+	loginResp, err := http.Post(server.URL+"/api/auth/login", "application/json", bytes.NewReader(loginBody))
+	if err != nil {
+		t.Fatalf("step 2 login failed: %v", err)
+	}
+	defer loginResp.Body.Close()
+	if loginResp.StatusCode != http.StatusOK {
+		t.Fatalf("step 2 login status %d", loginResp.StatusCode)
+	}
+
+	var loginData api.LoginResponse
+	_ = json.NewDecoder(loginResp.Body).Decode(&loginData)
+	if loginData.Token == "" || loginData.RefreshToken == "" {
+		t.Fatal("expected both access token and refresh token")
+	}
+
+	// Step 3: Access protected endpoint /api/auth/me
+	meReq, _ := http.NewRequest(http.MethodGet, server.URL+"/api/auth/me", nil)
+	meReq.Header.Set("Authorization", "Bearer "+loginData.Token)
+	meResp, err := http.DefaultClient.Do(meReq)
+	if err != nil {
+		t.Fatalf("step 3 me failed: %v", err)
+	}
+	defer meResp.Body.Close()
+	if meResp.StatusCode != http.StatusOK {
+		t.Fatalf("step 3 me status %d", meResp.StatusCode)
+	}
+
+	var meData api.UserResponse
+	_ = json.NewDecoder(meResp.Body).Decode(&meData)
+	if meData.Email != email || meData.Timezone != "Europe/London" {
+		t.Errorf("step 3 me data mismatch: %+v", meData)
+	}
+
+	// Step 4: Refresh token
+	refBody, _ := json.Marshal(api.RefreshRequest{
+		RefreshToken: loginData.RefreshToken,
+	})
+	refResp, err := http.Post(server.URL+"/api/auth/refresh", "application/json", bytes.NewReader(refBody))
+	if err != nil {
+		t.Fatalf("step 4 refresh failed: %v", err)
+	}
+	defer refResp.Body.Close()
+	if refResp.StatusCode != http.StatusOK {
+		t.Fatalf("step 4 refresh status %d", refResp.StatusCode)
+	}
+
+	var refData api.RefreshResponse
+	_ = json.NewDecoder(refResp.Body).Decode(&refData)
+	if refData.Token == "" || refData.RefreshToken == "" {
+		t.Fatal("expected new tokens from refresh")
+	}
+	if refData.RefreshToken == loginData.RefreshToken {
+		t.Fatal("refresh token must rotate")
+	}
+
+	// Step 5: Verify new access token works on /api/auth/me
+	meReq2, _ := http.NewRequest(http.MethodGet, server.URL+"/api/auth/me", nil)
+	meReq2.Header.Set("Authorization", "Bearer "+refData.Token)
+	meResp2, err := http.DefaultClient.Do(meReq2)
+	if err != nil {
+		t.Fatalf("step 5 me with refreshed token failed: %v", err)
+	}
+	defer meResp2.Body.Close()
+	if meResp2.StatusCode != http.StatusOK {
+		t.Fatalf("step 5 me with refreshed token status %d", meResp2.StatusCode)
+	}
+
+	// Step 6: Old refresh token rejected (revoked by rotation)
+	oldRefResp, err := http.Post(server.URL+"/api/auth/refresh", "application/json", bytes.NewReader(refBody))
+	if err != nil {
+		t.Fatalf("step 6 old refresh request failed: %v", err)
+	}
+	defer oldRefResp.Body.Close()
+	if oldRefResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("step 6 expected 401 for old refresh token, got %d", oldRefResp.StatusCode)
+	}
+}
+
+
 

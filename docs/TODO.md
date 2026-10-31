@@ -23,7 +23,7 @@
 - [X] Implement login (issue JWT)
 - [X] Implement auth middleware (validate JWT, attach user to request context)
 - [X] Implement refresh token flow
-- [ ] Add rate limiting to auth endpoints
+- [X] Add rate limiting to auth endpoints
 
 ## PHASE 3: Sites CRUD
 - [ ] `POST /api/sites` — add a site (validate URL, set defaults)
