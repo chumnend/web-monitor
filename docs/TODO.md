@@ -21,7 +21,7 @@
 ## PHASE 2: Authentication
 - [X] Implement user registration (hash password with bcrypt/argon2)
 - [X] Implement login (issue JWT)
-- [ ] Implement auth middleware (validate JWT, attach user to request context)
+- [X] Implement auth middleware (validate JWT, attach user to request context)
 - [ ] Implement refresh token flow
 - [ ] Add rate limiting to auth endpoints
 - [ ] Write tests for auth flows

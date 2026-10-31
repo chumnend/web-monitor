@@ -11,14 +11,16 @@ import (
 )
 
 type APIClient struct {
-	store       store.Store
-	authService *auth.Service
+	store          store.Store
+	authService    *auth.Service
+	authMiddleware *auth.Middleware
 }
 
 type clientConfig struct {
-	store       store.Store
-	authService *auth.Service
-	secretKey   string
+	store          store.Store
+	authService    *auth.Service
+	authMiddleware *auth.Middleware
+	secretKey      string
 }
 
 type Option func(*clientConfig)
@@ -34,6 +36,13 @@ func WithStore(s store.Store) Option {
 func WithAuthService(svc *auth.Service) Option {
 	return func(cfg *clientConfig) {
 		cfg.authService = svc
+	}
+}
+
+// WithAuthMiddleware sets custom auth middleware for the APIClient.
+func WithAuthMiddleware(m *auth.Middleware) Option {
+	return func(cfg *clientConfig) {
+		cfg.authMiddleware = m
 	}
 }
 
@@ -62,10 +71,25 @@ func NewAPIClient(opts ...Option) *APIClient {
 		cfg.authService = auth.NewService(cfg.store, svcOpts...)
 	}
 
-	return &APIClient{
-		store:       cfg.store,
-		authService: cfg.authService,
+	if cfg.authMiddleware == nil {
+		cfg.authMiddleware = cfg.authService.Middleware()
 	}
+
+	return &APIClient{
+		store:          cfg.store,
+		authService:    cfg.authService,
+		authMiddleware: cfg.authMiddleware,
+	}
+}
+
+// RequireAuth wraps an http.Handler with JWT authentication middleware.
+func (client *APIClient) RequireAuth(next http.Handler) http.Handler {
+	return client.authMiddleware.Handler(next)
+}
+
+// RequireAuthFunc wraps an http.HandlerFunc with JWT authentication middleware.
+func (client *APIClient) RequireAuthFunc(fn http.HandlerFunc) http.HandlerFunc {
+	return client.authMiddleware.WrapFunc(fn)
 }
 
 func (client *APIClient) corsMiddleware(next http.Handler) http.Handler {
@@ -88,6 +112,7 @@ func (client *APIClient) Handler() http.Handler {
 	mux.HandleFunc("GET /api/health", sayHello)
 	mux.HandleFunc("POST /api/auth/register", client.handleRegister)
 	mux.HandleFunc("POST /api/auth/login", client.handleLogin)
+	mux.Handle("GET /api/auth/me", client.RequireAuth(http.HandlerFunc(client.handleMe)))
 	return client.corsMiddleware(mux)
 }
 

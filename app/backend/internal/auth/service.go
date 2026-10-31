@@ -65,6 +65,11 @@ func (s *Service) TokenManager() *TokenManager {
 	return s.tokenManager
 }
 
+// Middleware returns an HTTP Middleware using the service's TokenManager and Store.
+func (s *Service) Middleware() *Middleware {
+	return NewMiddleware(s.tokenManager, s.store)
+}
+
 // Register registers a new user with a hashed password using bcrypt.
 func (s *Service) Register(ctx context.Context, input RegisterInput) (*store.User, error) {
 	email, err := ValidateAndNormalizeEmail(input.Email)

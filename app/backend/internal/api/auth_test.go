@@ -356,3 +356,123 @@ func TestCorsPreflight(t *testing.T) {
 		t.Errorf("expected Access-Control-Allow-Origin '*', got %s", resp.Header.Get("Access-Control-Allow-Origin"))
 	}
 }
+
+func TestMeEndpointSuccess(t *testing.T) {
+	memStore := store.NewMemoryStore()
+	client := api.NewAPIClient(api.WithStore(memStore), api.WithSecretKey("test-secret-key"))
+	server := httptest.NewServer(client.Handler())
+	defer server.Close()
+
+	// Register user
+	regPayload := `{"email":"david@example.com","password":"Password123!","timezone":"America/New_York"}`
+	regResp, err := http.Post(server.URL+"/api/auth/register", "application/json", bytes.NewBufferString(regPayload))
+	if err != nil {
+		t.Fatalf("failed to register user: %v", err)
+	}
+	regResp.Body.Close()
+
+	// Login
+	loginPayload := `{"email":"david@example.com","password":"Password123!"}`
+	loginResp, err := http.Post(server.URL+"/api/auth/login", "application/json", bytes.NewBufferString(loginPayload))
+	if err != nil {
+		t.Fatalf("failed to login: %v", err)
+	}
+	defer loginResp.Body.Close()
+
+	var loginData api.LoginResponse
+	if err := json.NewDecoder(loginResp.Body).Decode(&loginData); err != nil {
+		t.Fatalf("failed to decode login response: %v", err)
+	}
+
+	// Fetch /api/auth/me with Bearer token
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/api/auth/me", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+loginData.Token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to execute request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	var userRes api.UserResponse
+	if err := json.NewDecoder(resp.Body).Decode(&userRes); err != nil {
+		t.Fatalf("failed to decode user response: %v", err)
+	}
+
+	if userRes.Email != "david@example.com" {
+		t.Errorf("expected email david@example.com, got %s", userRes.Email)
+	}
+	if userRes.Timezone != "America/New_York" {
+		t.Errorf("expected timezone America/New_York, got %s", userRes.Timezone)
+	}
+	if userRes.ID != loginData.User.ID {
+		t.Errorf("expected user ID %v, got %v", loginData.User.ID, userRes.ID)
+	}
+}
+
+func TestMeEndpointUnauthorized(t *testing.T) {
+	memStore := store.NewMemoryStore()
+	client := api.NewAPIClient(api.WithStore(memStore))
+	server := httptest.NewServer(client.Handler())
+	defer server.Close()
+
+	tests := []struct {
+		name          string
+		authHeader    string
+		expectedError string
+	}{
+		{
+			name:          "missing authorization header",
+			authHeader:    "",
+			expectedError: "Missing or invalid authorization header",
+		},
+		{
+			name:          "invalid format",
+			authHeader:    "Token 12345",
+			expectedError: "Missing or invalid authorization header",
+		},
+		{
+			name:          "invalid token",
+			authHeader:    "Bearer invalid.token.value",
+			expectedError: "Invalid or expired token",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, server.URL+"/api/auth/me", nil)
+			if err != nil {
+				t.Fatalf("failed to create request: %v", err)
+			}
+			if tc.authHeader != "" {
+				req.Header.Set("Authorization", tc.authHeader)
+			}
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("failed to execute request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Errorf("expected status 401, got %d", resp.StatusCode)
+			}
+
+			var errRes api.ErrorResponse
+			if err := json.NewDecoder(resp.Body).Decode(&errRes); err != nil {
+				t.Fatalf("failed to decode error response: %v", err)
+			}
+			if errRes.Error != tc.expectedError {
+				t.Errorf("expected error %q, got %q", tc.expectedError, errRes.Error)
+			}
+		})
+	}
+}
+

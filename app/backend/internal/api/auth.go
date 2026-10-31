@@ -145,3 +145,19 @@ func (client *APIClient) handleLogin(w http.ResponseWriter, r *http.Request) {
 		ExpiresIn: result.ExpiresIn,
 	})
 }
+
+func (client *APIClient) handleMe(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, UserResponse{
+		ID:              user.ID,
+		Email:           user.Email,
+		Timezone:        user.Timezone,
+		EmailVerifiedAt: user.EmailVerifiedAt,
+		CreatedAt:       user.CreatedAt,
+	})
+}
