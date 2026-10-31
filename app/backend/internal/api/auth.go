@@ -24,6 +24,11 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
+// RefreshRequest defines the expected JSON payload for refreshing an access token.
+type RefreshRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
 // UserResponse represents a user safe for public API responses (no password hash).
 type UserResponse struct {
 	ID              uuid.UUID  `json:"id"`
@@ -41,9 +46,18 @@ type RegisterResponse struct {
 
 // LoginResponse represents the response body returned upon successful login.
 type LoginResponse struct {
-	Token     string       `json:"token"`
-	User      UserResponse `json:"user"`
-	ExpiresIn int64        `json:"expires_in"`
+	Token        string       `json:"token"`
+	RefreshToken string       `json:"refresh_token"`
+	User         UserResponse `json:"user"`
+	ExpiresIn    int64        `json:"expires_in"`
+}
+
+// RefreshResponse represents the response body returned upon successful token refresh.
+type RefreshResponse struct {
+	Token        string       `json:"token"`
+	RefreshToken string       `json:"refresh_token"`
+	User         UserResponse `json:"user"`
+	ExpiresIn    int64        `json:"expires_in"`
 }
 
 // ErrorResponse represents a standardized API error response.
@@ -134,7 +148,50 @@ func (client *APIClient) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, LoginResponse{
-		Token: result.Token,
+		Token:        result.Token,
+		RefreshToken: result.RefreshToken,
+		User: UserResponse{
+			ID:              result.User.ID,
+			Email:           result.User.Email,
+			Timezone:        result.User.Timezone,
+			EmailVerifiedAt: result.User.EmailVerifiedAt,
+			CreatedAt:       result.User.CreatedAt,
+		},
+		ExpiresIn: result.ExpiresIn,
+	})
+}
+
+func (client *APIClient) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	ct := r.Header.Get("Content-Type")
+	if ct != "" && !strings.Contains(ct, "application/json") {
+		writeError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+		return
+	}
+
+	var req RefreshRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+
+	if strings.TrimSpace(req.RefreshToken) == "" {
+		writeError(w, http.StatusBadRequest, "refresh_token is required")
+		return
+	}
+
+	result, err := client.authService.RefreshToken(r.Context(), req.RefreshToken)
+	if err != nil {
+		if errors.Is(err, auth.ErrInvalidRefreshToken) {
+			writeError(w, http.StatusUnauthorized, "Invalid or expired refresh token")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, RefreshResponse{
+		Token:        result.Token,
+		RefreshToken: result.RefreshToken,
 		User: UserResponse{
 			ID:              result.User.ID,
 			Email:           result.User.Email,

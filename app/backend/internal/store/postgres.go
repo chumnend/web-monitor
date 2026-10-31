@@ -123,3 +123,94 @@ func (s *PostgresStore) GetUserByID(ctx context.Context, id uuid.UUID) (*User, e
 
 	return &user, nil
 }
+
+// CreateRefreshToken inserts a new refresh token into the refresh_tokens table.
+func (s *PostgresStore) CreateRefreshToken(ctx context.Context, token *RefreshToken) error {
+	if token == nil {
+		return errors.New("refresh token cannot be nil")
+	}
+	if token.ID == uuid.Nil {
+		token.ID = uuid.New()
+	}
+	if token.CreatedAt.IsZero() {
+		token.CreatedAt = time.Now().UTC()
+	}
+
+	query := `
+		INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, revoked_at, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`
+	_, err := s.db.ExecContext(
+		ctx,
+		query,
+		token.ID,
+		token.UserID,
+		token.TokenHash,
+		token.ExpiresAt,
+		token.RevokedAt,
+		token.CreatedAt,
+	)
+	return err
+}
+
+// GetRefreshToken retrieves a refresh token by its hash.
+func (s *PostgresStore) GetRefreshToken(ctx context.Context, tokenHash string) (*RefreshToken, error) {
+	query := `
+		SELECT id, user_id, token_hash, expires_at, revoked_at, created_at
+		FROM refresh_tokens
+		WHERE token_hash = $1
+	`
+	var token RefreshToken
+	err := s.db.QueryRowContext(ctx, query, tokenHash).Scan(
+		&token.ID,
+		&token.UserID,
+		&token.TokenHash,
+		&token.ExpiresAt,
+		&token.RevokedAt,
+		&token.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrRefreshTokenNotFound
+		}
+		return nil, err
+	}
+	return &token, nil
+}
+
+// RevokeRefreshToken marks a specific refresh token as revoked.
+func (s *PostgresStore) RevokeRefreshToken(ctx context.Context, tokenHash string, revokedAt time.Time) error {
+	query := `
+		UPDATE refresh_tokens
+		SET revoked_at = $1
+		WHERE token_hash = $2 AND revoked_at IS NULL
+	`
+	res, err := s.db.ExecContext(ctx, query, revokedAt, tokenHash)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		var count int
+		_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM refresh_tokens WHERE token_hash = $1`, tokenHash).Scan(&count)
+		if count == 0 {
+			return ErrRefreshTokenNotFound
+		}
+	}
+	return nil
+}
+
+// RevokeUserRefreshTokens revokes all active refresh tokens belonging to a user.
+func (s *PostgresStore) RevokeUserRefreshTokens(ctx context.Context, userID uuid.UUID, revokedAt time.Time) error {
+	query := `
+		UPDATE refresh_tokens
+		SET revoked_at = $1
+		WHERE user_id = $2 AND revoked_at IS NULL
+	`
+	_, err := s.db.ExecContext(ctx, query, revokedAt, userID)
+	return err
+}
+

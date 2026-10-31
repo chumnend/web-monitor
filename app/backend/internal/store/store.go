@@ -191,3 +191,14 @@ type NotificationEvent struct {
 	SentAt         time.Time              `json:"sent_at" db:"sent_at"`
 	DeliveryStatus *string                `json:"delivery_status,omitempty" db:"delivery_status"`
 }
+
+// RefreshToken represents a stored refresh token in the system (from 000009_create_refresh_tokens_table).
+type RefreshToken struct {
+	ID        uuid.UUID  `json:"id" db:"id"`
+	UserID    uuid.UUID  `json:"user_id" db:"user_id"`
+	TokenHash string     `json:"token_hash" db:"token_hash"`
+	ExpiresAt time.Time  `json:"expires_at" db:"expires_at"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty" db:"revoked_at"`
+	CreatedAt time.Time  `json:"created_at" db:"created_at"`
+}
+

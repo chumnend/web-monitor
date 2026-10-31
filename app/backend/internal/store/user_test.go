@@ -90,9 +90,107 @@ func runUserStoreTests(t *testing.T, s store.Store) {
 	}
 }
 
+func runRefreshTokenStoreTests(t *testing.T, s store.Store) {
+	ctx := context.Background()
+
+	// Create user first
+	userID := uuid.New()
+	user := &store.User{
+		ID:           userID,
+		Email:        "rt-" + userID.String()[:8] + "@example.com",
+		PasswordHash: "passhash",
+		Timezone:     "UTC",
+		CreatedAt:    time.Now().UTC(),
+	}
+	if err := s.CreateUser(ctx, user); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+
+	// 1. Create Refresh Token
+	tokenID := uuid.New()
+	hash1 := "hash-token-1-" + tokenID.String()
+	expiresAt := time.Now().Add(24 * time.Hour).Truncate(time.Microsecond).UTC()
+	rt1 := &store.RefreshToken{
+		ID:        tokenID,
+		UserID:    userID,
+		TokenHash: hash1,
+		ExpiresAt: expiresAt,
+		CreatedAt: time.Now().Truncate(time.Microsecond).UTC(),
+	}
+
+	if err := s.CreateRefreshToken(ctx, rt1); err != nil {
+		t.Fatalf("failed to create refresh token: %v", err)
+	}
+
+	// 2. Get Refresh Token
+	found, err := s.GetRefreshToken(ctx, hash1)
+	if err != nil {
+		t.Fatalf("failed to get refresh token: %v", err)
+	}
+	if found.ID != tokenID {
+		t.Errorf("expected token ID %v, got %v", tokenID, found.ID)
+	}
+	if found.UserID != userID {
+		t.Errorf("expected user ID %v, got %v", userID, found.UserID)
+	}
+	if found.RevokedAt != nil {
+		t.Errorf("expected RevokedAt to be nil, got: %v", found.RevokedAt)
+	}
+
+	// 3. Revoke single token
+	revokedAt := time.Now().Truncate(time.Microsecond).UTC()
+	if err := s.RevokeRefreshToken(ctx, hash1, revokedAt); err != nil {
+		t.Fatalf("failed to revoke refresh token: %v", err)
+	}
+
+	foundRevoked, err := s.GetRefreshToken(ctx, hash1)
+	if err != nil {
+		t.Fatalf("failed to get revoked token: %v", err)
+	}
+	if foundRevoked.RevokedAt == nil {
+		t.Fatal("expected RevokedAt to be non-nil")
+	}
+
+	// 4. Create second token and revoke user tokens
+	hash2 := "hash-token-2-" + uuid.New().String()
+	rt2 := &store.RefreshToken{
+		ID:        uuid.New(),
+		UserID:    userID,
+		TokenHash: hash2,
+		ExpiresAt: expiresAt,
+		CreatedAt: time.Now().Truncate(time.Microsecond).UTC(),
+	}
+	if err := s.CreateRefreshToken(ctx, rt2); err != nil {
+		t.Fatalf("failed to create second refresh token: %v", err)
+	}
+
+	if err := s.RevokeUserRefreshTokens(ctx, userID, revokedAt); err != nil {
+		t.Fatalf("failed to revoke user refresh tokens: %v", err)
+	}
+
+	foundUserRevoked, err := s.GetRefreshToken(ctx, hash2)
+	if err != nil {
+		t.Fatalf("failed to get second revoked token: %v", err)
+	}
+	if foundUserRevoked.RevokedAt == nil {
+		t.Fatal("expected second token to be revoked by user revocation")
+	}
+
+	// 5. Not found error
+	_, err = s.GetRefreshToken(ctx, "nonexistent-hash")
+	if err != store.ErrRefreshTokenNotFound {
+		t.Errorf("expected ErrRefreshTokenNotFound, got: %v", err)
+	}
+}
+
 func TestMemoryStoreUsers(t *testing.T) {
 	memStore := store.NewMemoryStore()
 	runUserStoreTests(t, memStore)
+}
+
+func TestMemoryStoreRefreshTokens(t *testing.T) {
+	memStore := store.NewMemoryStore()
+	runRefreshTokenStoreTests(t, memStore)
 }
 
 func TestPostgresStoreUsers(t *testing.T) {
@@ -116,4 +214,5 @@ func TestPostgresStoreUsers(t *testing.T) {
 
 	pgStore := store.NewPostgresStore(db)
 	runUserStoreTests(t, pgStore)
+	runRefreshTokenStoreTests(t, pgStore)
 }

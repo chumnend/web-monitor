@@ -1,6 +1,9 @@
 package auth
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"time"
 
@@ -9,7 +12,8 @@ import (
 )
 
 var (
-	ErrInvalidToken = errors.New("invalid or expired token")
+	ErrInvalidToken        = errors.New("invalid or expired token")
+	ErrInvalidRefreshToken = errors.New("invalid or expired refresh token")
 )
 
 // Claims represents the JWT claims payload.
@@ -21,27 +25,40 @@ type Claims struct {
 
 // TokenManager manages signing and validating JWT tokens.
 type TokenManager struct {
-	secretKey []byte
-	duration  time.Duration
+	secretKey       []byte
+	duration        time.Duration
+	refreshDuration time.Duration
 }
 
 // NewTokenManager creates a new TokenManager instance.
-func NewTokenManager(secretKey string, duration time.Duration) *TokenManager {
+func NewTokenManager(secretKey string, duration time.Duration, refreshDuration ...time.Duration) *TokenManager {
 	if secretKey == "" {
 		secretKey = "default-development-secret-key-change-in-prod"
 	}
 	if duration == 0 {
 		duration = 24 * time.Hour
 	}
+
+	refDuration := 7 * 24 * time.Hour
+	if len(refreshDuration) > 0 && refreshDuration[0] != 0 {
+		refDuration = refreshDuration[0]
+	}
+
 	return &TokenManager{
-		secretKey: []byte(secretKey),
-		duration:  duration,
+		secretKey:       []byte(secretKey),
+		duration:        duration,
+		refreshDuration: refDuration,
 	}
 }
 
 // Duration returns the configured token validity duration.
 func (m *TokenManager) Duration() time.Duration {
 	return m.duration
+}
+
+// RefreshTokenDuration returns the configured refresh token validity duration.
+func (m *TokenManager) RefreshTokenDuration() time.Duration {
+	return m.refreshDuration
 }
 
 // GenerateToken generates and signs a new JWT token for a given user.
@@ -79,4 +96,19 @@ func (m *TokenManager) ValidateToken(tokenString string) (*Claims, error) {
 	}
 
 	return claims, nil
+}
+
+// GenerateRefreshToken generates a cryptographically secure random token.
+func GenerateRefreshToken() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
+}
+
+// HashRefreshToken returns the SHA-256 hex digest of a raw refresh token.
+func HashRefreshToken(token string) string {
+	hash := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(hash[:])
 }

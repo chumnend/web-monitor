@@ -314,3 +314,146 @@ func TestServiceRegisterAndLogin(t *testing.T) {
 		t.Fatalf("expected ErrInvalidCredentials for empty password, got: %v", err)
 	}
 }
+
+func TestRefreshTokenHelpers(t *testing.T) {
+	token1, err := auth.GenerateRefreshToken()
+	if err != nil {
+		t.Fatalf("failed to generate refresh token: %v", err)
+	}
+	if len(token1) != 64 {
+		t.Fatalf("expected 64 hex characters for 32 bytes, got %d", len(token1))
+	}
+
+	token2, err := auth.GenerateRefreshToken()
+	if err != nil {
+		t.Fatalf("failed to generate second token: %v", err)
+	}
+	if token1 == token2 {
+		t.Fatal("tokens should be randomly unique")
+	}
+
+	hash1 := auth.HashRefreshToken(token1)
+	hash2 := auth.HashRefreshToken(token1)
+	if hash1 != hash2 {
+		t.Fatal("hash should be deterministic")
+	}
+	if len(hash1) != 64 {
+		t.Fatalf("expected 64 hex characters for SHA-256 hash, got %d", len(hash1))
+	}
+}
+
+func TestRefreshTokenFlow(t *testing.T) {
+	memStore := store.NewMemoryStore()
+	tm := auth.NewTokenManager("test-jwt-secret", 15*time.Minute, 7*24*time.Hour)
+	svc := auth.NewService(memStore, auth.WithTokenManager(tm))
+	ctx := context.Background()
+
+	// 1. Register and login
+	_, err := svc.Register(ctx, auth.RegisterInput{
+		Email:    "refreshtest@example.com",
+		Password: "Password123!",
+	})
+	if err != nil {
+		t.Fatalf("failed to register user: %v", err)
+	}
+
+	loginRes, err := svc.Login(ctx, auth.LoginInput{
+		Email:    "refreshtest@example.com",
+		Password: "Password123!",
+	})
+	if err != nil {
+		t.Fatalf("failed to login: %v", err)
+	}
+	if loginRes.RefreshToken == "" {
+		t.Fatal("expected non-empty refresh token from login")
+	}
+
+	// 2. Refresh token successfully (token rotation)
+	refreshRes, err := svc.RefreshToken(ctx, loginRes.RefreshToken)
+	if err != nil {
+		t.Fatalf("failed to refresh token: %v", err)
+	}
+	if refreshRes.Token == "" {
+		t.Fatal("expected new access token")
+	}
+	if refreshRes.RefreshToken == "" {
+		t.Fatal("expected new refresh token")
+	}
+	if refreshRes.RefreshToken == loginRes.RefreshToken {
+		t.Fatal("refresh token should rotate to a new token")
+	}
+	if refreshRes.User.Email != "refreshtest@example.com" {
+		t.Errorf("expected email refreshtest@example.com, got %s", refreshRes.User.Email)
+	}
+
+	// Validate new access token
+	claims, err := tm.ValidateToken(refreshRes.Token)
+	if err != nil {
+		t.Fatalf("new access token validation failed: %v", err)
+	}
+	if claims.Email != "refreshtest@example.com" {
+		t.Errorf("claims email mismatch: %+v", claims)
+	}
+
+	// 3. Attempt to reuse old rotated refresh token (reuse detection)
+	_, err = svc.RefreshToken(ctx, loginRes.RefreshToken)
+	if err != auth.ErrInvalidRefreshToken {
+		t.Fatalf("expected ErrInvalidRefreshToken when reusing old token, got: %v", err)
+	}
+
+	// Because reuse was detected, all user tokens should have been revoked, so even the new token is now invalid!
+	_, err = svc.RefreshToken(ctx, refreshRes.RefreshToken)
+	if err != auth.ErrInvalidRefreshToken {
+		t.Fatalf("expected ErrInvalidRefreshToken on token after theft detection, got: %v", err)
+	}
+
+	// 4. Invalid refresh token strings
+	_, err = svc.RefreshToken(ctx, "")
+	if err != auth.ErrInvalidRefreshToken {
+		t.Fatalf("expected ErrInvalidRefreshToken for empty string, got: %v", err)
+	}
+	_, err = svc.RefreshToken(ctx, "nonexistent-token")
+	if err != auth.ErrInvalidRefreshToken {
+		t.Fatalf("expected ErrInvalidRefreshToken for nonexistent token, got: %v", err)
+	}
+
+	// 5. Expired refresh token
+	loginRes2, err := svc.Login(ctx, auth.LoginInput{
+		Email:    "refreshtest@example.com",
+		Password: "Password123!",
+	})
+	if err != nil {
+		t.Fatalf("second login failed: %v", err)
+	}
+
+	// Manually set expiration in past
+	hash2 := auth.HashRefreshToken(loginRes2.RefreshToken)
+	stored, err := memStore.GetRefreshToken(ctx, hash2)
+	if err != nil {
+		t.Fatalf("failed to get stored token: %v", err)
+	}
+	stored.ExpiresAt = time.Now().Add(-1 * time.Hour)
+	_ = memStore.CreateRefreshToken(ctx, stored) // overwrite with expired
+
+	_, err = svc.RefreshToken(ctx, loginRes2.RefreshToken)
+	if err != auth.ErrInvalidRefreshToken {
+		t.Fatalf("expected ErrInvalidRefreshToken for expired token, got: %v", err)
+	}
+
+	// 6. RevokeToken
+	loginRes3, err := svc.Login(ctx, auth.LoginInput{
+		Email:    "refreshtest@example.com",
+		Password: "Password123!",
+	})
+	if err != nil {
+		t.Fatalf("third login failed: %v", err)
+	}
+	if err := svc.RevokeToken(ctx, loginRes3.RefreshToken); err != nil {
+		t.Fatalf("failed to revoke token: %v", err)
+	}
+	_, err = svc.RefreshToken(ctx, loginRes3.RefreshToken)
+	if err != auth.ErrInvalidRefreshToken {
+		t.Fatalf("expected ErrInvalidRefreshToken after explicit revocation, got: %v", err)
+	}
+}
+

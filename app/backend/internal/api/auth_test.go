@@ -476,3 +476,183 @@ func TestMeEndpointUnauthorized(t *testing.T) {
 	}
 }
 
+func TestRefreshEndpointSuccess(t *testing.T) {
+	memStore := store.NewMemoryStore()
+	client := api.NewAPIClient(api.WithStore(memStore))
+	server := httptest.NewServer(client.Handler())
+	defer server.Close()
+
+	// Register user
+	regPayload := `{"email":"emma@example.com","password":"Password123!"}`
+	regResp, err := http.Post(server.URL+"/api/auth/register", "application/json", bytes.NewBufferString(regPayload))
+	if err != nil {
+		t.Fatalf("failed to register user: %v", err)
+	}
+	regResp.Body.Close()
+
+	// Login
+	loginPayload := `{"email":"emma@example.com","password":"Password123!"}`
+	loginResp, err := http.Post(server.URL+"/api/auth/login", "application/json", bytes.NewBufferString(loginPayload))
+	if err != nil {
+		t.Fatalf("failed to login: %v", err)
+	}
+	defer loginResp.Body.Close()
+
+	var loginData api.LoginResponse
+	if err := json.NewDecoder(loginResp.Body).Decode(&loginData); err != nil {
+		t.Fatalf("failed to decode login response: %v", err)
+	}
+	if loginData.RefreshToken == "" {
+		t.Fatal("expected non-empty refresh token from login")
+	}
+
+	// Refresh token
+	refPayload, _ := json.Marshal(api.RefreshRequest{
+		RefreshToken: loginData.RefreshToken,
+	})
+	refResp, err := http.Post(server.URL+"/api/auth/refresh", "application/json", bytes.NewReader(refPayload))
+	if err != nil {
+		t.Fatalf("failed to refresh token: %v", err)
+	}
+	defer refResp.Body.Close()
+
+	if refResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from refresh, got %d", refResp.StatusCode)
+	}
+
+	var refData api.RefreshResponse
+	if err := json.NewDecoder(refResp.Body).Decode(&refData); err != nil {
+		t.Fatalf("failed to decode refresh response: %v", err)
+	}
+
+	if refData.Token == "" {
+		t.Fatal("expected non-empty access token")
+	}
+	if refData.RefreshToken == "" {
+		t.Fatal("expected non-empty rotated refresh token")
+	}
+	if refData.RefreshToken == loginData.RefreshToken {
+		t.Fatal("refresh token must rotate")
+	}
+	if refData.User.Email != "emma@example.com" {
+		t.Errorf("expected email emma@example.com, got %s", refData.User.Email)
+	}
+
+	// Verify the new access token can be used on a protected endpoint
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/api/auth/me", nil)
+	if err != nil {
+		t.Fatalf("failed to create me request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+refData.Token)
+	meResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to call me endpoint: %v", err)
+	}
+	defer meResp.Body.Close()
+	if meResp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK with new access token, got %d", meResp.StatusCode)
+	}
+}
+
+func TestRefreshEndpointReuseRevocation(t *testing.T) {
+	memStore := store.NewMemoryStore()
+	client := api.NewAPIClient(api.WithStore(memStore))
+	server := httptest.NewServer(client.Handler())
+	defer server.Close()
+
+	// Register user
+	regPayload := `{"email":"frank@example.com","password":"Password123!"}`
+	regResp, err := http.Post(server.URL+"/api/auth/register", "application/json", bytes.NewBufferString(regPayload))
+	if err != nil {
+		t.Fatalf("failed to register user: %v", err)
+	}
+	regResp.Body.Close()
+
+	// Login
+	loginPayload := `{"email":"frank@example.com","password":"Password123!"}`
+	loginResp, err := http.Post(server.URL+"/api/auth/login", "application/json", bytes.NewBufferString(loginPayload))
+	if err != nil {
+		t.Fatalf("failed to login: %v", err)
+	}
+	defer loginResp.Body.Close()
+
+	var loginData api.LoginResponse
+	_ = json.NewDecoder(loginResp.Body).Decode(&loginData)
+
+	// First refresh -> success
+	refPayload, _ := json.Marshal(api.RefreshRequest{
+		RefreshToken: loginData.RefreshToken,
+	})
+	refResp1, err := http.Post(server.URL+"/api/auth/refresh", "application/json", bytes.NewReader(refPayload))
+	if err != nil {
+		t.Fatalf("first refresh failed: %v", err)
+	}
+	defer refResp1.Body.Close()
+	if refResp1.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", refResp1.StatusCode)
+	}
+
+	var refData1 api.RefreshResponse
+	_ = json.NewDecoder(refResp1.Body).Decode(&refData1)
+
+	// Second refresh using old token -> 401 Unauthorized (and revokes remaining tokens for user)
+	refResp2, err := http.Post(server.URL+"/api/auth/refresh", "application/json", bytes.NewReader(refPayload))
+	if err != nil {
+		t.Fatalf("second refresh failed: %v", err)
+	}
+	defer refResp2.Body.Close()
+	if refResp2.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for reused refresh token, got %d", refResp2.StatusCode)
+	}
+
+	// Attempt using rotated token also fails because reuse revocation invalidated all user tokens
+	refPayloadRotated, _ := json.Marshal(api.RefreshRequest{
+		RefreshToken: refData1.RefreshToken,
+	})
+	refResp3, err := http.Post(server.URL+"/api/auth/refresh", "application/json", bytes.NewReader(refPayloadRotated))
+	if err != nil {
+		t.Fatalf("third refresh failed: %v", err)
+	}
+	defer refResp3.Body.Close()
+	if refResp3.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 on token after theft revocation, got %d", refResp3.StatusCode)
+	}
+}
+
+func TestRefreshEndpointInvalid(t *testing.T) {
+	client := api.NewAPIClient()
+	server := httptest.NewServer(client.Handler())
+	defer server.Close()
+
+	// Missing refresh_token
+	resp1, err := http.Post(server.URL+"/api/auth/refresh", "application/json", bytes.NewBufferString(`{"refresh_token":""}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp1.Body.Close()
+	if resp1.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request, got %d", resp1.StatusCode)
+	}
+
+	// Nonexistent refresh_token
+	resp2, err := http.Post(server.URL+"/api/auth/refresh", "application/json", bytes.NewBufferString(`{"refresh_token":"nonexistent-token"}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 Unauthorized, got %d", resp2.StatusCode)
+	}
+
+	// Unsupported Media Type
+	resp3, err := http.Post(server.URL+"/api/auth/refresh", "text/plain", bytes.NewBufferString(`token`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusUnsupportedMediaType {
+		t.Errorf("expected 415 Unsupported Media Type, got %d", resp3.StatusCode)
+	}
+}
+
+

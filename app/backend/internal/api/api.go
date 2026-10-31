@@ -112,6 +112,7 @@ func (client *APIClient) Handler() http.Handler {
 	mux.HandleFunc("GET /api/health", sayHello)
 	mux.HandleFunc("POST /api/auth/register", client.handleRegister)
 	mux.HandleFunc("POST /api/auth/login", client.handleLogin)
+	mux.HandleFunc("POST /api/auth/refresh", client.handleRefresh)
 	mux.Handle("GET /api/auth/me", client.RequireAuth(http.HandlerFunc(client.handleMe)))
 	return client.corsMiddleware(mux)
 }

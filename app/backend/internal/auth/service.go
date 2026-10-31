@@ -30,9 +30,18 @@ type LoginInput struct {
 
 // LoginResult represents the outcome of a successful login.
 type LoginResult struct {
-	Token     string      `json:"token"`
-	User      *store.User `json:"user"`
-	ExpiresIn int64       `json:"expires_in"` // in seconds
+	Token        string      `json:"token"`
+	RefreshToken string      `json:"refresh_token"`
+	User         *store.User `json:"user"`
+	ExpiresIn    int64       `json:"expires_in"` // in seconds
+}
+
+// RefreshResult represents the outcome of a successful token refresh.
+type RefreshResult struct {
+	Token        string      `json:"token"`
+	RefreshToken string      `json:"refresh_token"`
+	User         *store.User `json:"user"`
+	ExpiresIn    int64       `json:"expires_in"` // in seconds
 }
 
 // Service provides authentication and user management operations.
@@ -104,7 +113,7 @@ func (s *Service) Register(ctx context.Context, input RegisterInput) (*store.Use
 	return user, nil
 }
 
-// Login verifies user credentials and issues a JWT token.
+// Login verifies user credentials and issues an access token and refresh token.
 func (s *Service) Login(ctx context.Context, input LoginInput) (*LoginResult, error) {
 	email := strings.ToLower(strings.TrimSpace(input.Email))
 	if email == "" || input.Password == "" {
@@ -128,9 +137,113 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (*LoginResult, er
 		return nil, err
 	}
 
+	rawRefreshToken, err := GenerateRefreshToken()
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	rt := &store.RefreshToken{
+		ID:        uuid.New(),
+		UserID:    user.ID,
+		TokenHash: HashRefreshToken(rawRefreshToken),
+		ExpiresAt: now.Add(s.tokenManager.RefreshTokenDuration()),
+		CreatedAt: now,
+	}
+
+	if err := s.store.CreateRefreshToken(ctx, rt); err != nil {
+		return nil, err
+	}
+
 	return &LoginResult{
-		Token:     token,
-		User:      user,
-		ExpiresIn: int64(s.tokenManager.Duration().Seconds()),
+		Token:        token,
+		RefreshToken: rawRefreshToken,
+		User:         user,
+		ExpiresIn:    int64(s.tokenManager.Duration().Seconds()),
 	}, nil
+}
+
+// RefreshToken validates a refresh token and performs token rotation, returning new access and refresh tokens.
+func (s *Service) RefreshToken(ctx context.Context, rawRefreshToken string) (*RefreshResult, error) {
+	rawRefreshToken = strings.TrimSpace(rawRefreshToken)
+	if rawRefreshToken == "" {
+		return nil, ErrInvalidRefreshToken
+	}
+
+	tokenHash := HashRefreshToken(rawRefreshToken)
+	storedToken, err := s.store.GetRefreshToken(ctx, tokenHash)
+	if err != nil {
+		if errors.Is(err, store.ErrRefreshTokenNotFound) {
+			return nil, ErrInvalidRefreshToken
+		}
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+
+	// If token was already revoked, token reuse / theft detected: revoke all user refresh tokens!
+	if storedToken.RevokedAt != nil {
+		_ = s.store.RevokeUserRefreshTokens(ctx, storedToken.UserID, now)
+		return nil, ErrInvalidRefreshToken
+	}
+
+	// Check if token expired
+	if now.After(storedToken.ExpiresAt) {
+		return nil, ErrInvalidRefreshToken
+	}
+
+	// Fetch user
+	user, err := s.store.GetUserByID(ctx, storedToken.UserID)
+	if err != nil {
+		if errors.Is(err, store.ErrUserNotFound) {
+			return nil, ErrInvalidRefreshToken
+		}
+		return nil, err
+	}
+
+	// Token rotation: Revoke current refresh token
+	if err := s.store.RevokeRefreshToken(ctx, tokenHash, now); err != nil {
+		return nil, err
+	}
+
+	// Generate new access token
+	newAccessToken, err := s.tokenManager.GenerateToken(user.ID, user.Email)
+	if err != nil {
+		return nil, err
+	}
+
+	// Generate new refresh token
+	newRawRefreshToken, err := GenerateRefreshToken()
+	if err != nil {
+		return nil, err
+	}
+
+	newRT := &store.RefreshToken{
+		ID:        uuid.New(),
+		UserID:    user.ID,
+		TokenHash: HashRefreshToken(newRawRefreshToken),
+		ExpiresAt: now.Add(s.tokenManager.RefreshTokenDuration()),
+		CreatedAt: now,
+	}
+
+	if err := s.store.CreateRefreshToken(ctx, newRT); err != nil {
+		return nil, err
+	}
+
+	return &RefreshResult{
+		Token:        newAccessToken,
+		RefreshToken: newRawRefreshToken,
+		User:         user,
+		ExpiresIn:    int64(s.tokenManager.Duration().Seconds()),
+	}, nil
+}
+
+// RevokeToken revokes a refresh token (e.g. on logout).
+func (s *Service) RevokeToken(ctx context.Context, rawRefreshToken string) error {
+	rawRefreshToken = strings.TrimSpace(rawRefreshToken)
+	if rawRefreshToken == "" {
+		return nil
+	}
+	hash := HashRefreshToken(rawRefreshToken)
+	return s.store.RevokeRefreshToken(ctx, hash, time.Now().UTC())
 }
