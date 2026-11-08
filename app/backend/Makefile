@@ -10,8 +10,13 @@ build:
 
 .PHONY: start
 start:
-	@echo "Executing..."
+	@echo "Executing API..."
 	@./bin/api
+
+.PHONY: start-worker
+start-worker:
+	@echo "Executing worker..."
+	@./bin/worker
 
 .PHONY: test
 test:
