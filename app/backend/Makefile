@@ -5,6 +5,7 @@ build:
 	@echo "Building application..."
 	@mkdir -p bin/
 	@go build -o bin/api cmd/api/main.go
+	@go build -o bin/worker cmd/worker/main.go
 	@echo "App built."
 
 .PHONY: start
