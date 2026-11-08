@@ -6,12 +6,14 @@ import (
 	"time"
 
 	"web-monitor/internal/auth"
+	"web-monitor/internal/sites"
 	"web-monitor/internal/store"
 )
 
 type APIClient struct {
 	store          store.Store
 	authService    *auth.Service
+	sitesService   *sites.Service
 	authMiddleware *auth.Middleware
 	rateLimiter    *auth.RateLimiter
 	startTime      time.Time
@@ -20,6 +22,7 @@ type APIClient struct {
 type clientConfig struct {
 	store          store.Store
 	authService    *auth.Service
+	sitesService   *sites.Service
 	authMiddleware *auth.Middleware
 	rateLimiter    *auth.RateLimiter
 	secretKey      string
@@ -38,6 +41,13 @@ func WithStore(s store.Store) Option {
 func WithAuthService(svc *auth.Service) Option {
 	return func(cfg *clientConfig) {
 		cfg.authService = svc
+	}
+}
+
+// WithSitesService sets a custom sites service for the APIClient.
+func WithSitesService(svc *sites.Service) Option {
+	return func(cfg *clientConfig) {
+		cfg.sitesService = svc
 	}
 }
 
@@ -80,6 +90,10 @@ func NewAPIClient(opts ...Option) *APIClient {
 		cfg.authService = auth.NewService(cfg.store, svcOpts...)
 	}
 
+	if cfg.sitesService == nil {
+		cfg.sitesService = sites.NewService(cfg.store)
+	}
+
 	if cfg.authMiddleware == nil {
 		cfg.authMiddleware = cfg.authService.Middleware()
 	}
@@ -91,6 +105,7 @@ func NewAPIClient(opts ...Option) *APIClient {
 	return &APIClient{
 		store:          cfg.store,
 		authService:    cfg.authService,
+		sitesService:   cfg.sitesService,
 		authMiddleware: cfg.authMiddleware,
 		rateLimiter:    cfg.rateLimiter,
 		startTime:      time.Now().UTC(),
@@ -139,11 +154,24 @@ func (client *APIClient) corsMiddleware(next http.Handler) http.Handler {
 
 func (client *APIClient) Handler() http.Handler {
 	mux := http.NewServeMux()
+
+	// Health
 	mux.HandleFunc("GET /api/health", client.handleHealth)
+
+	// Auth
 	mux.Handle("POST /api/auth/register", client.RateLimit(http.HandlerFunc(client.handleRegister)))
 	mux.Handle("POST /api/auth/login", client.RateLimit(http.HandlerFunc(client.handleLogin)))
 	mux.Handle("POST /api/auth/refresh", client.RateLimit(http.HandlerFunc(client.handleRefresh)))
 	mux.Handle("GET /api/auth/me", client.RequireAuth(http.HandlerFunc(client.handleMe)))
+
+	// Sites CRUD (authenticated)
+	mux.Handle("POST /api/sites", client.RequireAuth(http.HandlerFunc(client.handleCreateSite)))
+	mux.Handle("GET /api/sites", client.RequireAuth(http.HandlerFunc(client.handleListSites)))
+	mux.Handle("GET /api/sites/{id}", client.RequireAuth(http.HandlerFunc(client.handleGetSite)))
+	mux.Handle("PATCH /api/sites/{id}", client.RequireAuth(http.HandlerFunc(client.handleUpdateSite)))
+	mux.Handle("PUT /api/sites/{id}", client.RequireAuth(http.HandlerFunc(client.handleUpdateSite)))
+	mux.Handle("DELETE /api/sites/{id}", client.RequireAuth(http.HandlerFunc(client.handleDeleteSite)))
+
 	return client.corsMiddleware(mux)
 }
 

@@ -55,3 +55,22 @@ type SiteState struct {
 	UptimePct24h        *float64   `json:"uptime_pct_24h,omitempty" db:"uptime_pct_24h"`
 	UptimePct30d        *float64   `json:"uptime_pct_30d,omitempty" db:"uptime_pct_30d"`
 }
+
+// SiteWithTags represents a site combined with its assigned tags and current status.
+type SiteWithTags struct {
+	Site
+	Tags          []string   `json:"tags"`
+	CurrentStatus SiteStatus `json:"current_status"`
+}
+
+// UpdateSiteInput specifies which fields to update on an existing site.
+type UpdateSiteInput struct {
+	Label             *string   `json:"label,omitempty"`
+	CheckIntervalSec  *int      `json:"check_interval_sec,omitempty"`
+	TimeoutSec        *int      `json:"timeout_sec,omitempty"`
+	FailureThreshold  *int      `json:"failure_threshold,omitempty"`
+	RetryCount        *int      `json:"retry_count,omitempty"`
+	ExpectedStatusMin *int      `json:"expected_status_min,omitempty"`
+	ExpectedStatusMax *int      `json:"expected_status_max,omitempty"`
+	Tags              *[]string `json:"tags,omitempty"`
+}
