@@ -12,6 +12,7 @@ import (
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"web-monitor/internal/checker"
+	"web-monitor/internal/notify"
 	"web-monitor/internal/store"
 )
 
@@ -44,6 +45,12 @@ func main() {
 	}
 
 	engine := checker.NewEngine(dataStore, nil)
+	
+	dispatcher := notify.NewDispatcher(dataStore, 5*time.Minute)
+	dispatcher.RegisterSender(store.ChannelTypeWebhook, notify.NewWebhookSender(nil))
+	dispatcher.RegisterSender(store.ChannelTypeEmail, notify.NewEmailSender(notify.EmailConfig{}))
+	engine.AddTransitionListener(dispatcher.HandleTransition)
+
 	pool := checker.NewWorkerPool(20, 200)
 	scheduler := checker.NewScheduler(dataStore, engine, pool, 15*time.Second)
 

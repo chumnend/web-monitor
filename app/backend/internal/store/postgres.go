@@ -884,3 +884,265 @@ func (s *PostgresStore) getSiteTags(ctx context.Context, siteID uuid.UUID) ([]st
 	}
 	return tags, rows.Err()
 }
+
+// CreateNotificationChannel inserts a new notification channel for a user.
+func (s *PostgresStore) CreateNotificationChannel(ctx context.Context, ch *NotificationChannel) error {
+	if ch.ID == uuid.Nil {
+		ch.ID = uuid.New()
+	}
+	if ch.CreatedAt.IsZero() {
+		ch.CreatedAt = time.Now().UTC()
+	}
+
+	query := `
+		INSERT INTO notification_channels (id, user_id, site_id, type, target, is_enabled, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`
+	_, err := s.db.ExecContext(ctx, query, ch.ID, ch.UserID, ch.SiteID, ch.Type, ch.Target, ch.IsEnabled, ch.CreatedAt)
+	return err
+}
+
+// GetNotificationChannelByID retrieves a single notification channel, verifying ownership.
+func (s *PostgresStore) GetNotificationChannelByID(ctx context.Context, userID, channelID uuid.UUID) (*NotificationChannel, error) {
+	query := `
+		SELECT id, user_id, site_id, type, target, is_enabled, created_at
+		FROM notification_channels
+		WHERE id = $1 AND user_id = $2
+	`
+	var ch NotificationChannel
+	err := s.db.QueryRowContext(ctx, query, channelID, userID).Scan(
+		&ch.ID, &ch.UserID, &ch.SiteID, &ch.Type, &ch.Target, &ch.IsEnabled, &ch.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrChannelNotFound
+		}
+		return nil, err
+	}
+	return &ch, nil
+}
+
+// ListNotificationChannels returns all notification channels for a user, optionally filtered by siteID.
+func (s *PostgresStore) ListNotificationChannels(ctx context.Context, userID uuid.UUID, siteID *uuid.UUID) ([]*NotificationChannel, error) {
+	var query string
+	var args []any
+	if siteID != nil {
+		query = `
+			SELECT id, user_id, site_id, type, target, is_enabled, created_at
+			FROM notification_channels
+			WHERE user_id = $1 AND site_id = $2
+			ORDER BY created_at ASC
+		`
+		args = []any{userID, *siteID}
+	} else {
+		query = `
+			SELECT id, user_id, site_id, type, target, is_enabled, created_at
+			FROM notification_channels
+			WHERE user_id = $1
+			ORDER BY created_at ASC
+		`
+		args = []any{userID}
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	var channels []*NotificationChannel
+	for rows.Next() {
+		var ch NotificationChannel
+		if err := rows.Scan(&ch.ID, &ch.UserID, &ch.SiteID, &ch.Type, &ch.Target, &ch.IsEnabled, &ch.CreatedAt); err != nil {
+			return nil, err
+		}
+		channels = append(channels, &ch)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if channels == nil {
+		channels = []*NotificationChannel{}
+	}
+	return channels, nil
+}
+
+// UpdateNotificationChannel modifies a notification channel's is_enabled state and/or target.
+func (s *PostgresStore) UpdateNotificationChannel(ctx context.Context, userID, channelID uuid.UUID, isEnabled *bool, target *string) (*NotificationChannel, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	querySelect := `
+		SELECT id, user_id, site_id, type, target, is_enabled, created_at
+		FROM notification_channels
+		WHERE id = $1 AND user_id = $2
+		FOR UPDATE
+	`
+	var ch NotificationChannel
+	err = tx.QueryRowContext(ctx, querySelect, channelID, userID).Scan(
+		&ch.ID, &ch.UserID, &ch.SiteID, &ch.Type, &ch.Target, &ch.IsEnabled, &ch.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrChannelNotFound
+		}
+		return nil, err
+	}
+
+	if isEnabled != nil {
+		ch.IsEnabled = *isEnabled
+	}
+	if target != nil {
+		ch.Target = *target
+	}
+
+	queryUpdate := `
+		UPDATE notification_channels
+		SET is_enabled = $1, target = $2
+		WHERE id = $3
+	`
+	if _, err := tx.ExecContext(ctx, queryUpdate, ch.IsEnabled, ch.Target, ch.ID); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &ch, nil
+}
+
+// DeleteNotificationChannel removes a notification channel.
+func (s *PostgresStore) DeleteNotificationChannel(ctx context.Context, userID, channelID uuid.UUID) error {
+	query := `
+		DELETE FROM notification_channels
+		WHERE id = $1 AND user_id = $2
+	`
+	res, err := s.db.ExecContext(ctx, query, channelID, userID)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrChannelNotFound
+	}
+	return nil
+}
+
+// GetChannelsForSiteTransition fetches all active channels that should be notified for a specific site transition.
+func (s *PostgresStore) GetChannelsForSiteTransition(ctx context.Context, site *Site) ([]*NotificationChannel, error) {
+	query := `
+		SELECT id, user_id, site_id, type, target, is_enabled, created_at
+		FROM notification_channels
+		WHERE user_id = $1 AND is_enabled = true AND (site_id IS NULL OR site_id = $2)
+	`
+	rows, err := s.db.QueryContext(ctx, query, site.UserID, site.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var channels []*NotificationChannel
+	for rows.Next() {
+		var ch NotificationChannel
+		if err := rows.Scan(&ch.ID, &ch.UserID, &ch.SiteID, &ch.Type, &ch.Target, &ch.IsEnabled, &ch.CreatedAt); err != nil {
+			return nil, err
+		}
+		channels = append(channels, &ch)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if channels == nil {
+		channels = []*NotificationChannel{}
+	}
+	return channels, nil
+}
+
+// RecordNotificationEvent inserts a new notification event log.
+func (s *PostgresStore) RecordNotificationEvent(ctx context.Context, event *NotificationEvent) error {
+	if event.ID == uuid.Nil {
+		event.ID = uuid.New()
+	}
+	if event.SentAt.IsZero() {
+		event.SentAt = time.Now().UTC()
+	}
+	query := `
+		INSERT INTO notification_events (id, site_id, channel_id, transition, sent_at, delivery_status)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`
+	_, err := s.db.ExecContext(ctx, query, event.ID, event.SiteID, event.ChannelID, string(event.Transition), event.SentAt, event.DeliveryStatus)
+	return err
+}
+
+// GetLastNotificationEvent returns the most recent event for a given site and channel.
+func (s *PostgresStore) GetLastNotificationEvent(ctx context.Context, siteID, channelID uuid.UUID) (*NotificationEvent, error) {
+	query := `
+		SELECT id, site_id, channel_id, transition, sent_at, delivery_status
+		FROM notification_events
+		WHERE site_id = $1 AND channel_id = $2
+		ORDER BY sent_at DESC
+		LIMIT 1
+	`
+	var e NotificationEvent
+	var transStr string
+	err := s.db.QueryRowContext(ctx, query, siteID, channelID).Scan(
+		&e.ID, &e.SiteID, &e.ChannelID, &transStr, &e.SentAt, &e.DeliveryStatus,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	e.Transition = NotificationTransition(transStr)
+	return &e, nil
+}
+
+// ListNotificationEvents fetches recent notification events for sites owned by the user.
+func (s *PostgresStore) ListNotificationEvents(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*NotificationEvent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	query := `
+		SELECT e.id, e.site_id, e.channel_id, e.transition, e.sent_at, e.delivery_status
+		FROM notification_events e
+		JOIN sites s ON s.id = e.site_id
+		WHERE s.user_id = $1
+		ORDER BY e.sent_at DESC
+		LIMIT $2 OFFSET $3
+	`
+	rows, err := s.db.QueryContext(ctx, query, userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []*NotificationEvent
+	for rows.Next() {
+		var e NotificationEvent
+		var transStr string
+		if err := rows.Scan(&e.ID, &e.SiteID, &e.ChannelID, &transStr, &e.SentAt, &e.DeliveryStatus); err != nil {
+			return nil, err
+		}
+		e.Transition = NotificationTransition(transStr)
+		events = append(events, &e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if events == nil {
+		events = []*NotificationEvent{}
+	}
+	return events, nil
+}
+

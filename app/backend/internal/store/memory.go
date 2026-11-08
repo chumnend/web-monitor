@@ -23,6 +23,8 @@ type MemoryStore struct {
 	siteTags      map[uuid.UUID][]uuid.UUID
 	checkResults  map[uuid.UUID][]*CheckResult
 	nextCheckID   int64
+	channels      map[uuid.UUID]*NotificationChannel
+	events        []*NotificationEvent
 }
 
 // NewMemoryStore creates a new in-memory store instance.
@@ -36,6 +38,8 @@ func NewMemoryStore() *MemoryStore {
 		siteTags:      make(map[uuid.UUID][]uuid.UUID),
 		checkResults:  make(map[uuid.UUID][]*CheckResult),
 		nextCheckID:   1,
+		channels:      make(map[uuid.UUID]*NotificationChannel),
+		events:        make([]*NotificationEvent, 0),
 	}
 }
 
@@ -678,3 +682,187 @@ func (m *MemoryStore) getSiteTagNamesLocked(siteID uuid.UUID) []string {
 	}
 	return names
 }
+
+// CreateNotificationChannel creates a notification target channel.
+func (m *MemoryStore) CreateNotificationChannel(_ context.Context, ch *NotificationChannel) error {
+	if ch == nil {
+		return errors.New("channel cannot be nil")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if ch.ID == uuid.Nil {
+		ch.ID = uuid.New()
+	}
+	if ch.CreatedAt.IsZero() {
+		ch.CreatedAt = time.Now().UTC()
+	}
+
+	clone := *ch
+	m.channels[ch.ID] = &clone
+	return nil
+}
+
+// GetNotificationChannelByID retrieves a channel by ID verifying user ownership.
+func (m *MemoryStore) GetNotificationChannelByID(_ context.Context, userID, channelID uuid.UUID) (*NotificationChannel, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	ch, ok := m.channels[channelID]
+	if !ok || ch.UserID != userID {
+		return nil, ErrChannelNotFound
+	}
+
+	clone := *ch
+	return &clone, nil
+}
+
+// ListNotificationChannels returns all notification channels for a user, optionally filtered by site.
+func (m *MemoryStore) ListNotificationChannels(_ context.Context, userID uuid.UUID, siteID *uuid.UUID) ([]*NotificationChannel, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []*NotificationChannel
+	for _, ch := range m.channels {
+		if ch.UserID != userID {
+			continue
+		}
+		if siteID != nil {
+			if ch.SiteID == nil || *ch.SiteID != *siteID {
+				continue
+			}
+		}
+		clone := *ch
+		result = append(result, &clone)
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedAt.Before(result[j].CreatedAt)
+	})
+
+	return result, nil
+}
+
+// UpdateNotificationChannel updates the enabled status and/or target of a channel.
+func (m *MemoryStore) UpdateNotificationChannel(_ context.Context, userID, channelID uuid.UUID, isEnabled *bool, target *string) (*NotificationChannel, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	ch, ok := m.channels[channelID]
+	if !ok || ch.UserID != userID {
+		return nil, ErrChannelNotFound
+	}
+
+	if isEnabled != nil {
+		ch.IsEnabled = *isEnabled
+	}
+	if target != nil {
+		ch.Target = *target
+	}
+
+	clone := *ch
+	return &clone, nil
+}
+
+// DeleteNotificationChannel removes a channel for a user.
+func (m *MemoryStore) DeleteNotificationChannel(_ context.Context, userID, channelID uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	ch, ok := m.channels[channelID]
+	if !ok || ch.UserID != userID {
+		return ErrChannelNotFound
+	}
+
+	delete(m.channels, channelID)
+	return nil
+}
+
+// GetChannelsForSiteTransition returns all active notification channels applicable to a site.
+func (m *MemoryStore) GetChannelsForSiteTransition(_ context.Context, site *Site) ([]*NotificationChannel, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []*NotificationChannel
+	for _, ch := range m.channels {
+		if ch.UserID == site.UserID && ch.IsEnabled {
+			if ch.SiteID == nil || *ch.SiteID == site.ID {
+				clone := *ch
+				result = append(result, &clone)
+			}
+		}
+	}
+	return result, nil
+}
+
+// RecordNotificationEvent records a notification attempt (sent, failed, or suppressed).
+func (m *MemoryStore) RecordNotificationEvent(_ context.Context, event *NotificationEvent) error {
+	if event == nil {
+		return errors.New("event cannot be nil")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if event.ID == uuid.Nil {
+		event.ID = uuid.New()
+	}
+	if event.SentAt.IsZero() {
+		event.SentAt = time.Now().UTC()
+	}
+
+	clone := *event
+	m.events = append(m.events, &clone)
+	return nil
+}
+
+// GetLastNotificationEvent returns the most recent notification event for a site and channel.
+func (m *MemoryStore) GetLastNotificationEvent(_ context.Context, siteID, channelID uuid.UUID) (*NotificationEvent, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for i := len(m.events) - 1; i >= 0; i-- {
+		e := m.events[i]
+		if e.SiteID == siteID && e.ChannelID == channelID {
+			clone := *e
+			return &clone, nil
+		}
+	}
+	return nil, nil
+}
+
+// ListNotificationEvents returns recent notification events for a user's sites.
+func (m *MemoryStore) ListNotificationEvents(_ context.Context, userID uuid.UUID, limit, offset int) ([]*NotificationEvent, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	userSites := make(map[uuid.UUID]bool)
+	for _, s := range m.sites {
+		if s.UserID == userID {
+			userSites[s.ID] = true
+		}
+	}
+
+	var filtered []*NotificationEvent
+	for i := len(m.events) - 1; i >= 0; i-- {
+		e := m.events[i]
+		if userSites[e.SiteID] {
+			clone := *e
+			filtered = append(filtered, &clone)
+		}
+	}
+
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(filtered) {
+		return []*NotificationEvent{}, nil
+	}
+
+	end := len(filtered)
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+
+	return filtered[offset:end], nil
+}
+

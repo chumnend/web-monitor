@@ -15,6 +15,7 @@ var (
 	ErrSiteNotFound         = errors.New("site not found")
 	ErrDuplicateSite        = errors.New("site with this URL already exists")
 	ErrSiteStateNotFound    = errors.New("site state not found")
+	ErrChannelNotFound      = errors.New("notification channel not found")
 )
 
 // Store defines the data access contract for the application.
@@ -48,4 +49,15 @@ type Store interface {
 	GetSiteState(ctx context.Context, siteID uuid.UUID) (*SiteState, error)
 	GetSiteUptimeStats(ctx context.Context, siteID uuid.UUID) (*SiteUptimeStats, error)
 	GetDashboardSummary(ctx context.Context, userID uuid.UUID) (*DashboardSummary, error)
+
+	// Notifications
+	CreateNotificationChannel(ctx context.Context, ch *NotificationChannel) error
+	GetNotificationChannelByID(ctx context.Context, userID, channelID uuid.UUID) (*NotificationChannel, error)
+	ListNotificationChannels(ctx context.Context, userID uuid.UUID, siteID *uuid.UUID) ([]*NotificationChannel, error)
+	UpdateNotificationChannel(ctx context.Context, userID, channelID uuid.UUID, isEnabled *bool, target *string) (*NotificationChannel, error)
+	DeleteNotificationChannel(ctx context.Context, userID, channelID uuid.UUID) error
+	GetChannelsForSiteTransition(ctx context.Context, site *Site) ([]*NotificationChannel, error)
+	RecordNotificationEvent(ctx context.Context, event *NotificationEvent) error
+	GetLastNotificationEvent(ctx context.Context, siteID, channelID uuid.UUID) (*NotificationEvent, error)
+	ListNotificationEvents(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*NotificationEvent, error)
 }

@@ -52,11 +52,13 @@
 
 
 ## PHASE 6: Notifcations
-- [ ] Detect state transitions (up→down, down→up) in checker
-- [ ] Build notification dispatch worker
-- [ ] Implement email channel (e.g. via SMTP or a provider like SES/Postmark)
-- [ ] Add debounce/rate-limiting to avoid notification storms
-- [ ] `POST/GET /api/notifications` — manage notification preferences
+- [X] Detect state transitions (up→down, down→up) in checker
+- [X] Build notification dispatch worker
+- [X] Implement email channel (e.g. via SMTP or a provider like SES/Postmark)
+- [X] Add debounce/rate-limiting to avoid notification storms
+- [X] `POST/GET /api/notifications` — manage notification preferences
+- [X] Write tests for transition detection + dispatch
+
 
 ## PHASE 7: Real-time Updates (optional)
 - [ ] Decide: WebSocket vs SSE vs polling-only

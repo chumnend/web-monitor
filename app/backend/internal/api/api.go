@@ -182,6 +182,13 @@ func (client *APIClient) Handler() http.Handler {
 	mux.Handle("GET /api/sites/{id}/history", client.RequireAuth(http.HandlerFunc(client.handleSiteHistory)))
 	mux.Handle("GET /api/sites/{id}/uptime", client.RequireAuth(http.HandlerFunc(client.handleSiteUptime)))
 
+	// Notifications (authenticated)
+	mux.Handle("POST /api/notifications", client.RequireAuth(http.HandlerFunc(client.handleCreateNotificationChannel)))
+	mux.Handle("GET /api/notifications", client.RequireAuth(http.HandlerFunc(client.handleListNotificationChannels)))
+	mux.Handle("PATCH /api/notifications/{id}", client.RequireAuth(http.HandlerFunc(client.handleUpdateNotificationChannel)))
+	mux.Handle("DELETE /api/notifications/{id}", client.RequireAuth(http.HandlerFunc(client.handleDeleteNotificationChannel)))
+	mux.Handle("GET /api/notifications/events", client.RequireAuth(http.HandlerFunc(client.handleListNotificationEvents)))
+
 	return client.corsMiddleware(mux)
 }
 
