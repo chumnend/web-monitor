@@ -24,21 +24,25 @@
 - [X] Add rate limiting to auth endpoints
 
 ## PHASE 3: Sites CRUD
-- [ ] `POST /api/sites` — add a site (validate URL, set defaults)
-- [ ] `GET /api/sites` — list sites for logged-in user
-- [ ] `PATCH /api/sites/:id` — update label/tags/check interval
-- [ ] `DELETE /api/sites/:id` — remove/stop monitoring a site
-- [ ] Add tagging support (join table or array column)
+- [X] `POST /api/sites` — add a site (validate URL, set defaults)
+- [X] `GET /api/sites` — list sites for logged-in user
+- [X] `PATCH /api/sites/:id` — update label/tags/check interval
+- [X] `DELETE /api/sites/:id` — remove/stop monitoring a site
+- [X] Add tagging support (join table or array column)
+- [X] Write tests for sites CRUD + authorization (users can't touch others' sites)
+
 
 ## PHASE 4: Checker Engine
-- [ ] Build core HTTP probe function (GET/HEAD, timeout, expected status range)
-- [ ] Implement retry-once-on-failure logic
-- [ ] Implement consecutive-failure threshold before flipping status
-- [ ] Build scheduler (per-site ticker to start)
-- [ ] Build worker pool with bounded concurrency
-- [ ] Write check results to `check_results` table
-- [ ] Update denormalized `site_status` table on each check
-- [ ] Handle graceful shutdown (in-flight checks finish before worker exits)
+- [X] Build core HTTP probe function (GET/HEAD, timeout, expected status range)
+- [X] Implement retry-once-on-failure logic
+- [X] Implement consecutive-failure threshold before flipping status
+- [X] Build scheduler (per-site ticker to start)
+- [X] Build worker pool with bounded concurrency
+- [X] Write check results to `check_results` table
+- [X] Update denormalized `site_status` table on each check
+- [X] Handle graceful shutdown (in-flight checks finish before worker exits)
+- [X] Write tests for checker logic (mock HTTP server for various failure modes)
+
 
 ## PHASE 5: Status & History API
 - [ ] `GET /api/sites/:id/history` — paginated check results
