@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"web-monitor/internal/store"
@@ -33,11 +34,26 @@ type CreateSiteInput struct {
 // Service provides site monitoring management operations.
 type Service struct {
 	store store.Store
+	cache *Cache
 }
 
-// NewService creates a new sites Service.
-func NewService(s store.Store) *Service {
-	return &Service{store: s}
+// NewService creates a new sites Service with optional cache TTL.
+func NewService(s store.Store, cacheTTL ...time.Duration) *Service {
+	ttl := 15 * time.Second
+	if len(cacheTTL) > 0 && cacheTTL[0] > 0 {
+		ttl = cacheTTL[0]
+	}
+	return &Service{
+		store: s,
+		cache: NewCache(ttl),
+	}
+}
+
+// Close releases resources held by the service (such as cache cleanup tickers).
+func (s *Service) Close() {
+	if s.cache != nil {
+		s.cache.Close()
+	}
 }
 
 // CreateSite validates parameters, sets defaults, and persists a new site.
@@ -118,7 +134,11 @@ func (s *Service) CreateSite(ctx context.Context, userID uuid.UUID, input Create
 		ExpectedStatusMax: maxStatus,
 	}
 
-	return s.store.CreateSite(ctx, site, input.Tags)
+	created, err := s.store.CreateSite(ctx, site, input.Tags)
+	if err == nil {
+		s.cache.InvalidateUser(userID)
+	}
+	return created, err
 }
 
 // GetSite retrieves an active site for the specified user.
@@ -170,7 +190,6 @@ func (s *Service) UpdateSite(ctx context.Context, userID, siteID uuid.UUID, inpu
 	if input.ExpectedStatusMin != nil || input.ExpectedStatusMax != nil {
 		min := 200
 		max := 399
-		// Fetch current site to validate min <= max if only one is updated
 		current, err := s.store.GetSiteByID(ctx, userID, siteID)
 		if err != nil {
 			return nil, err
@@ -195,7 +214,12 @@ func (s *Service) UpdateSite(ctx context.Context, userID, siteID uuid.UUID, inpu
 		input.Label = &trimmed
 	}
 
-	return s.store.UpdateSite(ctx, userID, siteID, input)
+	updated, err := s.store.UpdateSite(ctx, userID, siteID, input)
+	if err == nil {
+		s.cache.InvalidateUser(userID)
+		s.cache.InvalidateSite(siteID)
+	}
+	return updated, err
 }
 
 // DeleteSite soft-deletes a site for the specified user.
@@ -203,5 +227,92 @@ func (s *Service) DeleteSite(ctx context.Context, userID, siteID uuid.UUID) erro
 	if userID == uuid.Nil || siteID == uuid.Nil {
 		return store.ErrSiteNotFound
 	}
-	return s.store.DeleteSite(ctx, userID, siteID)
+	err := s.store.DeleteSite(ctx, userID, siteID)
+	if err == nil {
+		s.cache.InvalidateUser(userID)
+		s.cache.InvalidateSite(siteID)
+	}
+	return err
+}
+
+// GetSiteHistory retrieves paginated check results for a site after verifying ownership.
+func (s *Service) GetSiteHistory(ctx context.Context, userID, siteID uuid.UUID, limit, offset int) ([]*store.CheckResult, int, error) {
+	if userID == uuid.Nil || siteID == uuid.Nil {
+		return nil, 0, store.ErrSiteNotFound
+	}
+
+	// Verify site ownership
+	if _, err := s.store.GetSiteByID(ctx, userID, siteID); err != nil {
+		return nil, 0, err
+	}
+
+	if limit <= 0 {
+		limit = 50
+	} else if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	results, err := s.store.GetCheckResults(ctx, siteID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	total, err := s.store.CountCheckResults(ctx, siteID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return results, total, nil
+}
+
+// GetSiteUptime computes or returns cached uptime statistics for a site after verifying ownership.
+func (s *Service) GetSiteUptime(ctx context.Context, userID, siteID uuid.UUID) (*store.SiteUptimeStats, error) {
+	if userID == uuid.Nil || siteID == uuid.Nil {
+		return nil, store.ErrSiteNotFound
+	}
+
+	// Verify site ownership
+	if _, err := s.store.GetSiteByID(ctx, userID, siteID); err != nil {
+		return nil, err
+	}
+
+	cacheKey := "uptime:" + siteID.String()
+	if cached, ok := s.cache.Get(cacheKey); ok {
+		if stats, ok := cached.(*store.SiteUptimeStats); ok {
+			return stats, nil
+		}
+	}
+
+	stats, err := s.store.GetSiteUptimeStats(ctx, siteID)
+	if err != nil {
+		return nil, err
+	}
+
+	s.cache.Set(cacheKey, stats)
+	return stats, nil
+}
+
+// GetDashboardSummary retrieves or computes cached dashboard summary counts for a user.
+func (s *Service) GetDashboardSummary(ctx context.Context, userID uuid.UUID) (*store.DashboardSummary, error) {
+	if userID == uuid.Nil {
+		return nil, errors.New("unauthorized: missing user id")
+	}
+
+	cacheKey := "summary:" + userID.String()
+	if cached, ok := s.cache.Get(cacheKey); ok {
+		if summary, ok := cached.(*store.DashboardSummary); ok {
+			return summary, nil
+		}
+	}
+
+	summary, err := s.store.GetDashboardSummary(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	s.cache.Set(cacheKey, summary)
+	return summary, nil
 }

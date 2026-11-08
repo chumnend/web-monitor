@@ -42,7 +42,10 @@ type Store interface {
 
 	// Checks & Site State
 	RecordCheckResult(ctx context.Context, result *CheckResult) error
+	CountCheckResults(ctx context.Context, siteID uuid.UUID) (int, error)
 	GetCheckResults(ctx context.Context, siteID uuid.UUID, limit, offset int) ([]*CheckResult, error)
 	UpdateSiteState(ctx context.Context, state *SiteState) error
 	GetSiteState(ctx context.Context, siteID uuid.UUID) (*SiteState, error)
+	GetSiteUptimeStats(ctx context.Context, siteID uuid.UUID) (*SiteUptimeStats, error)
+	GetDashboardSummary(ctx context.Context, userID uuid.UUID) (*DashboardSummary, error)
 }

@@ -221,3 +221,134 @@ func TestServiceCRUD(t *testing.T) {
 		t.Errorf("expected ErrSiteNotFound after delete, got %v", err)
 	}
 }
+
+func TestServiceHistoryAndUptime(t *testing.T) {
+	memStore := store.NewMemoryStore()
+	svc := sites.NewService(memStore)
+	defer svc.Close()
+	ctx := context.Background()
+
+	user1 := uuid.New()
+	user2 := uuid.New()
+
+	site, err := svc.CreateSite(ctx, user1, sites.CreateSiteInput{
+		URL: "https://mytestsite.com",
+	})
+	if err != nil {
+		t.Fatalf("failed to create site: %v", err)
+	}
+
+	// Add 3 check results
+	status200 := 200
+	respTime := 150
+	_ = memStore.RecordCheckResult(ctx, &store.CheckResult{
+		SiteID:         site.ID,
+		StatusCode:     &status200,
+		ResponseTimeMs: &respTime,
+		IsUp:           true,
+	})
+	_ = memStore.RecordCheckResult(ctx, &store.CheckResult{
+		SiteID:         site.ID,
+		StatusCode:     &status200,
+		ResponseTimeMs: &respTime,
+		IsUp:           true,
+	})
+	status500 := 500
+	_ = memStore.RecordCheckResult(ctx, &store.CheckResult{
+		SiteID:         site.ID,
+		StatusCode:     &status500,
+		ResponseTimeMs: &respTime,
+		IsUp:           false,
+	})
+
+	// 1. GetSiteHistory with pagination
+	results, total, err := svc.GetSiteHistory(ctx, user1, site.ID, 2, 0)
+	if err != nil {
+		t.Fatalf("failed to get site history: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("expected total 3, got %d", total)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 results on page 1, got %d", len(results))
+	}
+
+	page2, total2, err := svc.GetSiteHistory(ctx, user1, site.ID, 2, 2)
+	if err != nil || total2 != 3 || len(page2) != 1 {
+		t.Errorf("expected 1 result on page 2, got %d (total: %d)", len(page2), total2)
+	}
+
+	// User 2 cannot access User 1 history
+	_, _, err = svc.GetSiteHistory(ctx, user2, site.ID, 10, 0)
+	if err != store.ErrSiteNotFound {
+		t.Errorf("expected ErrSiteNotFound for other user history, got %v", err)
+	}
+
+	// 2. GetSiteUptime
+	uptime, err := svc.GetSiteUptime(ctx, user1, site.ID)
+	if err != nil {
+		t.Fatalf("failed to get site uptime: %v", err)
+	}
+	if uptime.TotalChecks24h != 3 {
+		t.Errorf("expected 3 total checks 24h, got %d", uptime.TotalChecks24h)
+	}
+	if uptime.UptimePct24h < 66.0 || uptime.UptimePct24h > 67.0 {
+		t.Errorf("expected ~66.67%% uptime, got %v", uptime.UptimePct24h)
+	}
+
+	// User 2 cannot access User 1 uptime
+	_, err = svc.GetSiteUptime(ctx, user2, site.ID)
+	if err != store.ErrSiteNotFound {
+		t.Errorf("expected ErrSiteNotFound for other user uptime, got %v", err)
+	}
+
+	// 3. GetDashboardSummary
+	summary, err := svc.GetDashboardSummary(ctx, user1)
+	if err != nil {
+		t.Fatalf("failed to get dashboard summary: %v", err)
+	}
+	if summary.TotalSites != 1 {
+		t.Errorf("expected 1 total site, got %d", summary.TotalSites)
+	}
+
+	// Verify cached response on second call
+	summary2, err := svc.GetDashboardSummary(ctx, user1)
+	if err != nil || summary2.TotalSites != 1 {
+		t.Errorf("expected cached summary, got: %+v", summary2)
+	}
+}
+
+func TestCacheInvalidation(t *testing.T) {
+	memStore := store.NewMemoryStore()
+	svc := sites.NewService(memStore)
+	defer svc.Close()
+	ctx := context.Background()
+	user := uuid.New()
+
+	site, err := svc.CreateSite(ctx, user, sites.CreateSiteInput{URL: "https://cachetest.com"})
+	if err != nil {
+		t.Fatalf("create site failed: %v", err)
+	}
+
+	// Cache summary
+	s1, _ := svc.GetDashboardSummary(ctx, user)
+	if s1.TotalSites != 1 {
+		t.Fatalf("expected 1 site, got %d", s1.TotalSites)
+	}
+
+	// Add second site -> invalidates user summary cache
+	_, _ = svc.CreateSite(ctx, user, sites.CreateSiteInput{URL: "https://cachetest2.com"})
+
+	s2, _ := svc.GetDashboardSummary(ctx, user)
+	if s2.TotalSites != 2 {
+		t.Errorf("expected cache to be invalidated to 2 sites, got %d", s2.TotalSites)
+	}
+
+	// Delete site -> invalidates user summary and site uptime
+	_ = svc.DeleteSite(ctx, user, site.ID)
+	s3, _ := svc.GetDashboardSummary(ctx, user)
+	if s3.TotalSites != 1 {
+		t.Errorf("expected 1 site after delete, got %d", s3.TotalSites)
+	}
+}
+

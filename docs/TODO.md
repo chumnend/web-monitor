@@ -45,10 +45,11 @@
 
 
 ## PHASE 5: Status & History API
-- [ ] `GET /api/sites/:id/history` — paginated check results
-- [ ] `GET /api/sites/:id/uptime` — uptime % over 24h/7d/30d
-- [ ] `GET /api/dashboard/summary` — aggregate up/down/degraded counts
-- [ ] Add caching for expensive aggregate queries if needed
+- [X] `GET /api/sites/:id/history` — paginated check results
+- [X] `GET /api/sites/:id/uptime` — uptime % over 24h/7d/30d
+- [X] `GET /api/dashboard/summary` — aggregate up/down/degraded counts
+- [X] Add caching for expensive aggregate queries if needed
+
 
 ## PHASE 6: Notifcations
 - [ ] Detect state transitions (up→down, down→up) in checker

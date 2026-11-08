@@ -74,3 +74,26 @@ type UpdateSiteInput struct {
 	ExpectedStatusMax *int      `json:"expected_status_max,omitempty"`
 	Tags              *[]string `json:"tags,omitempty"`
 }
+
+// SiteUptimeStats provides calculated availability percentages and counts across time windows.
+type SiteUptimeStats struct {
+	SiteID               uuid.UUID `json:"site_id"`
+	UptimePct24h         float64   `json:"uptime_pct_24h"`
+	UptimePct7d          float64   `json:"uptime_pct_7d"`
+	UptimePct30d         float64   `json:"uptime_pct_30d"`
+	AvgResponseTimeMs24h int       `json:"avg_response_time_ms_24h"`
+	TotalChecks24h       int       `json:"total_checks_24h"`
+	TotalChecks7d        int       `json:"total_checks_7d"`
+	TotalChecks30d       int       `json:"total_checks_30d"`
+}
+
+// DashboardSummary provides aggregate status counts for a user's monitored sites.
+type DashboardSummary struct {
+	TotalSites      int     `json:"total_sites"`
+	UpCount         int     `json:"up_count"`
+	DownCount       int     `json:"down_count"`
+	DegradedCount   int     `json:"degraded_count"`
+	PendingCount    int     `json:"pending_count"`
+	AvgUptimePct24h float64 `json:"avg_uptime_pct_24h"`
+}
+

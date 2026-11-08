@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"time"
 
@@ -697,6 +698,116 @@ func (s *PostgresStore) GetSiteState(ctx context.Context, siteID uuid.UUID) (*Si
 	}
 	state.CurrentStatus = SiteStatus(statusStr)
 	return &state, nil
+}
+
+// CountCheckResults returns total number of recorded check results for a site.
+func (s *PostgresStore) CountCheckResults(ctx context.Context, siteID uuid.UUID) (int, error) {
+	query := `SELECT COUNT(*) FROM check_results WHERE site_id = $1`
+	var count int
+	err := s.db.QueryRowContext(ctx, query, siteID).Scan(&count)
+	return count, err
+}
+
+// GetSiteUptimeStats calculates availability percentages and response metrics for 24h, 7d, and 30d windows.
+func (s *PostgresStore) GetSiteUptimeStats(ctx context.Context, siteID uuid.UUID) (*SiteUptimeStats, error) {
+	query := `
+		SELECT
+			COUNT(*) FILTER (WHERE checked_at > NOW() - INTERVAL '24 hours') AS total_24h,
+			COUNT(*) FILTER (WHERE checked_at > NOW() - INTERVAL '24 hours' AND is_up = true) AS up_24h,
+			COALESCE(AVG(response_time_ms) FILTER (WHERE checked_at > NOW() - INTERVAL '24 hours' AND response_time_ms > 0), 0) AS avg_resp_24h,
+			COUNT(*) FILTER (WHERE checked_at > NOW() - INTERVAL '7 days') AS total_7d,
+			COUNT(*) FILTER (WHERE checked_at > NOW() - INTERVAL '7 days' AND is_up = true) AS up_7d,
+			COUNT(*) FILTER (WHERE checked_at > NOW() - INTERVAL '30 days') AS total_30d,
+			COUNT(*) FILTER (WHERE checked_at > NOW() - INTERVAL '30 days' AND is_up = true) AS up_30d
+		FROM check_results
+		WHERE site_id = $1
+	`
+	var total24h, up24h, total7d, up7d, total30d, up30d int
+	var avgResp24h float64
+
+	err := s.db.QueryRowContext(ctx, query, siteID).Scan(
+		&total24h, &up24h, &avgResp24h,
+		&total7d, &up7d,
+		&total30d, &up30d,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	calcPct := func(up, total int) float64 {
+		if total == 0 {
+			return 100.0
+		}
+		raw := (float64(up) / float64(total)) * 100.0
+		return math.Round(raw*100) / 100
+	}
+
+	return &SiteUptimeStats{
+		SiteID:               siteID,
+		UptimePct24h:         calcPct(up24h, total24h),
+		UptimePct7d:          calcPct(up7d, total7d),
+		UptimePct30d:         calcPct(up30d, total30d),
+		AvgResponseTimeMs24h: int(math.Round(avgResp24h)),
+		TotalChecks24h:       total24h,
+		TotalChecks7d:        total7d,
+		TotalChecks30d:       total30d,
+	}, nil
+}
+
+// GetDashboardSummary aggregates status counts and average 24h uptime for a user's active sites.
+func (s *PostgresStore) GetDashboardSummary(ctx context.Context, userID uuid.UUID) (*DashboardSummary, error) {
+	query := `
+		SELECT
+			COUNT(s.id) AS total_sites,
+			COUNT(s.id) FILTER (WHERE COALESCE(st.current_status, 'pending') = 'up') AS up_count,
+			COUNT(s.id) FILTER (WHERE st.current_status = 'down') AS down_count,
+			COUNT(s.id) FILTER (WHERE st.current_status = 'up' AND st.consecutive_failures > 0) AS degraded_count,
+			COUNT(s.id) FILTER (WHERE COALESCE(st.current_status, 'pending') = 'pending') AS pending_count
+		FROM sites s
+		LEFT JOIN site_state st ON st.site_id = s.id
+		WHERE s.user_id = $1 AND s.deleted_at IS NULL
+	`
+
+	var summary DashboardSummary
+	err := s.db.QueryRowContext(ctx, query, userID).Scan(
+		&summary.TotalSites,
+		&summary.UpCount,
+		&summary.DownCount,
+		&summary.DegradedCount,
+		&summary.PendingCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	uptimeQuery := `
+		SELECT
+			COALESCE(
+				AVG(
+					CASE WHEN site_checks.total > 0
+					     THEN (site_checks.up::float / site_checks.total::float) * 100.0
+					     ELSE NULL
+					END
+				),
+				100.0
+			)
+		FROM sites s
+		JOIN LATERAL (
+			SELECT COUNT(*) AS total,
+			       COUNT(*) FILTER (WHERE is_up = true) AS up
+			FROM check_results cr
+			WHERE cr.site_id = s.id AND cr.checked_at > NOW() - INTERVAL '24 hours'
+		) site_checks ON true
+		WHERE s.user_id = $1 AND s.deleted_at IS NULL
+	`
+	var avgUptime float64
+	err = s.db.QueryRowContext(ctx, uptimeQuery, userID).Scan(&avgUptime)
+	if err != nil {
+		return nil, err
+	}
+	summary.AvgUptimePct24h = math.Round(avgUptime*100) / 100
+
+	return &summary, nil
 }
 
 

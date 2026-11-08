@@ -277,6 +277,61 @@ func runCheckStoreTests(t *testing.T, s store.Store) {
 	if fetchedState.ConsecutiveFailures != 0 {
 		t.Errorf("expected 0 failures, got %d", fetchedState.ConsecutiveFailures)
 	}
+
+	// 6. CountCheckResults
+	count1, err := s.CountCheckResults(ctx, createdSite.ID)
+	if err != nil || count1 != 1 {
+		t.Fatalf("expected count 1, got %d (err: %v)", count1, err)
+	}
+
+	// Record a second check (down, 500, 250ms)
+	statusCode2 := 500
+	respTime2 := 250
+	check2 := &store.CheckResult{
+		SiteID:         createdSite.ID,
+		CheckedAt:      time.Now().UTC(),
+		StatusCode:     &statusCode2,
+		ResponseTimeMs: &respTime2,
+		IsUp:           false,
+	}
+	if err := s.RecordCheckResult(ctx, check2); err != nil {
+		t.Fatalf("failed to record second check result: %v", err)
+	}
+
+	count2, err := s.CountCheckResults(ctx, createdSite.ID)
+	if err != nil || count2 != 2 {
+		t.Fatalf("expected count 2, got %d (err: %v)", count2, err)
+	}
+
+	// 7. GetSiteUptimeStats
+	uptimeStats, err := s.GetSiteUptimeStats(ctx, createdSite.ID)
+	if err != nil {
+		t.Fatalf("failed to get site uptime stats: %v", err)
+	}
+	if uptimeStats.TotalChecks24h != 2 {
+		t.Errorf("expected 2 total checks 24h, got %d", uptimeStats.TotalChecks24h)
+	}
+	if uptimeStats.UptimePct24h != 50.0 {
+		t.Errorf("expected 50.0%% uptime 24h, got %v", uptimeStats.UptimePct24h)
+	}
+	if uptimeStats.AvgResponseTimeMs24h != 187 && uptimeStats.AvgResponseTimeMs24h != 188 {
+		t.Errorf("expected avg response time ~187ms, got %d", uptimeStats.AvgResponseTimeMs24h)
+	}
+
+	// 8. GetDashboardSummary
+	summary, err := s.GetDashboardSummary(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("failed to get dashboard summary: %v", err)
+	}
+	if summary.TotalSites != 1 {
+		t.Errorf("expected 1 total site, got %d", summary.TotalSites)
+	}
+	if summary.UpCount != 1 {
+		t.Errorf("expected 1 up site, got %d", summary.UpCount)
+	}
+	if summary.AvgUptimePct24h != 50.0 {
+		t.Errorf("expected 50.0%% avg uptime 24h, got %v", summary.AvgUptimePct24h)
+	}
 }
 
 func TestMemoryStoreSites(t *testing.T) {

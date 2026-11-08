@@ -117,6 +117,9 @@ func (client *APIClient) Close() {
 	if client.rateLimiter != nil {
 		client.rateLimiter.Close()
 	}
+	if client.sitesService != nil {
+		client.sitesService.Close()
+	}
 }
 
 // RequireAuth wraps an http.Handler with JWT authentication middleware.
@@ -164,6 +167,9 @@ func (client *APIClient) Handler() http.Handler {
 	mux.Handle("POST /api/auth/refresh", client.RateLimit(http.HandlerFunc(client.handleRefresh)))
 	mux.Handle("GET /api/auth/me", client.RequireAuth(http.HandlerFunc(client.handleMe)))
 
+	// Dashboard Summary (authenticated)
+	mux.Handle("GET /api/dashboard/summary", client.RequireAuth(http.HandlerFunc(client.handleDashboardSummary)))
+
 	// Sites CRUD (authenticated)
 	mux.Handle("POST /api/sites", client.RequireAuth(http.HandlerFunc(client.handleCreateSite)))
 	mux.Handle("GET /api/sites", client.RequireAuth(http.HandlerFunc(client.handleListSites)))
@@ -171,6 +177,10 @@ func (client *APIClient) Handler() http.Handler {
 	mux.Handle("PATCH /api/sites/{id}", client.RequireAuth(http.HandlerFunc(client.handleUpdateSite)))
 	mux.Handle("PUT /api/sites/{id}", client.RequireAuth(http.HandlerFunc(client.handleUpdateSite)))
 	mux.Handle("DELETE /api/sites/{id}", client.RequireAuth(http.HandlerFunc(client.handleDeleteSite)))
+
+	// Sites History & Uptime (authenticated)
+	mux.Handle("GET /api/sites/{id}/history", client.RequireAuth(http.HandlerFunc(client.handleSiteHistory)))
+	mux.Handle("GET /api/sites/{id}/uptime", client.RequireAuth(http.HandlerFunc(client.handleSiteUptime)))
 
 	return client.corsMiddleware(mux)
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -45,6 +46,15 @@ type SiteResponse struct {
 // SitesListResponse wraps a list of sites in standard response format.
 type SitesListResponse struct {
 	Sites []*store.SiteWithTags `json:"sites"`
+}
+
+// SiteHistoryResponse wraps paginated site check results.
+type SiteHistoryResponse struct {
+	SiteID  uuid.UUID            `json:"site_id"`
+	Results []*store.CheckResult `json:"results"`
+	Total   int                  `json:"total"`
+	Limit   int                  `json:"limit"`
+	Offset  int                  `json:"offset"`
 }
 
 func (client *APIClient) handleCreateSite(w http.ResponseWriter, r *http.Request) {
@@ -229,4 +239,94 @@ func (client *APIClient) handleDeleteSite(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusOK, MessageResponse{Message: "Site deleted successfully"})
+}
+
+func (client *APIClient) handleSiteHistory(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok || userID == uuid.Nil {
+		writeError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	idStr := r.PathValue("id")
+	siteID, err := uuid.Parse(idStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid site ID")
+		return
+	}
+
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	offset := 0
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	results, total, err := client.sitesService.GetSiteHistory(r.Context(), userID, siteID, limit, offset)
+	if err != nil {
+		if errors.Is(err, store.ErrSiteNotFound) {
+			writeError(w, http.StatusNotFound, "Site not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, SiteHistoryResponse{
+		SiteID:  siteID,
+		Results: results,
+		Total:   total,
+		Limit:   limit,
+		Offset:  offset,
+	})
+}
+
+func (client *APIClient) handleSiteUptime(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok || userID == uuid.Nil {
+		writeError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	idStr := r.PathValue("id")
+	siteID, err := uuid.Parse(idStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid site ID")
+		return
+	}
+
+	stats, err := client.sitesService.GetSiteUptime(r.Context(), userID, siteID)
+	if err != nil {
+		if errors.Is(err, store.ErrSiteNotFound) {
+			writeError(w, http.StatusNotFound, "Site not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+func (client *APIClient) handleDashboardSummary(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok || userID == uuid.Nil {
+		writeError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	summary, err := client.sitesService.GetDashboardSummary(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, summary)
 }

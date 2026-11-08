@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -485,6 +486,142 @@ func (m *MemoryStore) GetSiteState(_ context.Context, siteID uuid.UUID) (*SiteSt
 
 	clone := *state
 	return &clone, nil
+}
+
+// CountCheckResults returns the total number of recorded check results for a site.
+func (m *MemoryStore) CountCheckResults(_ context.Context, siteID uuid.UUID) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return len(m.checkResults[siteID]), nil
+}
+
+// GetSiteUptimeStats calculates availability percentages and response metrics for 24h, 7d, and 30d windows.
+func (m *MemoryStore) GetSiteUptimeStats(_ context.Context, siteID uuid.UUID) (*SiteUptimeStats, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	history := m.checkResults[siteID]
+	now := time.Now().UTC()
+	cutoff24h := now.Add(-24 * time.Hour)
+	cutoff7d := now.Add(-7 * 24 * time.Hour)
+	cutoff30d := now.Add(-30 * 24 * time.Hour)
+
+	var total24h, up24h int
+	var total7d, up7d int
+	var total30d, up30d int
+	var sumResponseTime24h, countResponseTime24h int
+
+	for _, c := range history {
+		if c.CheckedAt.After(cutoff24h) {
+			total24h++
+			if c.IsUp {
+				up24h++
+			}
+			if c.ResponseTimeMs != nil && *c.ResponseTimeMs > 0 {
+				sumResponseTime24h += *c.ResponseTimeMs
+				countResponseTime24h++
+			}
+		}
+		if c.CheckedAt.After(cutoff7d) {
+			total7d++
+			if c.IsUp {
+				up7d++
+			}
+		}
+		if c.CheckedAt.After(cutoff30d) {
+			total30d++
+			if c.IsUp {
+				up30d++
+			}
+		}
+	}
+
+	calcPct := func(up, total int) float64 {
+		if total == 0 {
+			return 100.0
+		}
+		raw := (float64(up) / float64(total)) * 100.0
+		return math.Round(raw*100) / 100
+	}
+
+	avgResp := 0
+	if countResponseTime24h > 0 {
+		avgResp = sumResponseTime24h / countResponseTime24h
+	}
+
+	return &SiteUptimeStats{
+		SiteID:               siteID,
+		UptimePct24h:         calcPct(up24h, total24h),
+		UptimePct7d:          calcPct(up7d, total7d),
+		UptimePct30d:         calcPct(up30d, total30d),
+		AvgResponseTimeMs24h: avgResp,
+		TotalChecks24h:       total24h,
+		TotalChecks7d:        total7d,
+		TotalChecks30d:       total30d,
+	}, nil
+}
+
+// GetDashboardSummary aggregates site counts and status breakdown for a user.
+func (m *MemoryStore) GetDashboardSummary(_ context.Context, userID uuid.UUID) (*DashboardSummary, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	summary := &DashboardSummary{}
+	now := time.Now().UTC()
+	cutoff24h := now.Add(-24 * time.Hour)
+
+	var uptimeSum float64
+	var sitesWithChecks int
+
+	for _, site := range m.sites {
+		if site.UserID != userID || site.DeletedAt != nil {
+			continue
+		}
+		summary.TotalSites++
+
+		state := m.siteStates[site.ID]
+		if state == nil {
+			summary.PendingCount++
+		} else {
+			switch state.CurrentStatus {
+			case SiteStatusUp:
+				if state.ConsecutiveFailures > 0 {
+					summary.DegradedCount++
+				}
+				summary.UpCount++
+			case SiteStatusDown:
+				summary.DownCount++
+			default:
+				summary.PendingCount++
+			}
+		}
+
+		// Calculate 24h uptime for this site
+		history := m.checkResults[site.ID]
+		var total, up int
+		for _, c := range history {
+			if c.CheckedAt.After(cutoff24h) {
+				total++
+				if c.IsUp {
+					up++
+				}
+			}
+		}
+		if total > 0 {
+			uptimeSum += (float64(up) / float64(total)) * 100.0
+			sitesWithChecks++
+		}
+	}
+
+	if sitesWithChecks > 0 {
+		raw := uptimeSum / float64(sitesWithChecks)
+		summary.AvgUptimePct24h = math.Round(raw*100) / 100
+	} else {
+		summary.AvgUptimePct24h = 100.0
+	}
+
+	return summary, nil
 }
 
 // Helper methods (must be called with lock held)

@@ -399,3 +399,197 @@ func TestSitesTagFiltering(t *testing.T) {
 		t.Errorf("expected 0 sites for tag 'staging', got %d", len(listStaging.Sites))
 	}
 }
+
+func TestSiteHistoryEndpoint(t *testing.T) {
+	memStore := store.NewMemoryStore()
+	client := api.NewAPIClient(api.WithStore(memStore))
+	defer client.Close()
+	server := httptest.NewServer(client.Handler())
+	defer server.Close()
+
+	token1 := registerAndLogin(t, server.URL, "histuser1@example.com", "Password123!")
+	token2 := registerAndLogin(t, server.URL, "histuser2@example.com", "Password123!")
+
+	// Create site
+	siteResp := doAuthRequest(t, http.MethodPost, server.URL+"/api/sites", token1, api.CreateSiteRequest{
+		URL: "https://myservice.com",
+	})
+	defer siteResp.Body.Close()
+	var siteData api.SiteResponse
+	_ = json.NewDecoder(siteResp.Body).Decode(&siteData)
+	siteID := siteData.Site.ID
+
+	// Insert 3 check results
+	status200 := 200
+	respMs := 120
+	for i := 0; i < 3; i++ {
+		_ = memStore.RecordCheckResult(t.Context(), &store.CheckResult{
+			SiteID:         siteID,
+			StatusCode:     &status200,
+			ResponseTimeMs: &respMs,
+			IsUp:           true,
+		})
+	}
+
+	// 1. Get history with pagination (limit=2, offset=0)
+	resp1 := doAuthRequest(t, http.MethodGet, server.URL+"/api/sites/"+siteID.String()+"/history?limit=2&offset=0", token1, nil)
+	defer resp1.Body.Close()
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK on history, got %d", resp1.StatusCode)
+	}
+
+	var histData api.SiteHistoryResponse
+	if err := json.NewDecoder(resp1.Body).Decode(&histData); err != nil {
+		t.Fatalf("failed to decode history response: %v", err)
+	}
+	if histData.Total != 3 {
+		t.Errorf("expected total 3, got %d", histData.Total)
+	}
+	if len(histData.Results) != 2 {
+		t.Errorf("expected 2 results on page 1, got %d", len(histData.Results))
+	}
+	if histData.Limit != 2 || histData.Offset != 0 {
+		t.Errorf("expected limit 2 and offset 0, got %d, %d", histData.Limit, histData.Offset)
+	}
+
+	// 2. User 2 cannot access history for User 1's site
+	respUser2 := doAuthRequest(t, http.MethodGet, server.URL+"/api/sites/"+siteID.String()+"/history", token2, nil)
+	defer respUser2.Body.Close()
+	if respUser2.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 for User 2 accessing User 1 history, got %d", respUser2.StatusCode)
+	}
+
+	// 3. Unauthenticated -> 401
+	respUnauth := doAuthRequest(t, http.MethodGet, server.URL+"/api/sites/"+siteID.String()+"/history", "", nil)
+	defer respUnauth.Body.Close()
+	if respUnauth.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 for unauthenticated history, got %d", respUnauth.StatusCode)
+	}
+}
+
+func TestSiteUptimeEndpoint(t *testing.T) {
+	memStore := store.NewMemoryStore()
+	client := api.NewAPIClient(api.WithStore(memStore))
+	defer client.Close()
+	server := httptest.NewServer(client.Handler())
+	defer server.Close()
+
+	token1 := registerAndLogin(t, server.URL, "uptimeuser1@example.com", "Password123!")
+	token2 := registerAndLogin(t, server.URL, "uptimeuser2@example.com", "Password123!")
+
+	// Create site
+	siteResp := doAuthRequest(t, http.MethodPost, server.URL+"/api/sites", token1, api.CreateSiteRequest{
+		URL: "https://uptimetest.com",
+	})
+	defer siteResp.Body.Close()
+	var siteData api.SiteResponse
+	_ = json.NewDecoder(siteResp.Body).Decode(&siteData)
+	siteID := siteData.Site.ID
+
+	// Insert checks: 1 up (100ms), 1 down (200ms)
+	s200 := 200
+	r100 := 100
+	_ = memStore.RecordCheckResult(t.Context(), &store.CheckResult{
+		SiteID:         siteID,
+		StatusCode:     &s200,
+		ResponseTimeMs: &r100,
+		IsUp:           true,
+	})
+	s500 := 500
+	r200 := 200
+	_ = memStore.RecordCheckResult(t.Context(), &store.CheckResult{
+		SiteID:         siteID,
+		StatusCode:     &s500,
+		ResponseTimeMs: &r200,
+		IsUp:           false,
+	})
+
+	// 1. Get uptime
+	resp := doAuthRequest(t, http.MethodGet, server.URL+"/api/sites/"+siteID.String()+"/uptime", token1, nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK on uptime, got %d", resp.StatusCode)
+	}
+
+	var uptimeData store.SiteUptimeStats
+	if err := json.NewDecoder(resp.Body).Decode(&uptimeData); err != nil {
+		t.Fatalf("failed to decode uptime response: %v", err)
+	}
+	if uptimeData.TotalChecks24h != 2 {
+		t.Errorf("expected 2 total checks, got %d", uptimeData.TotalChecks24h)
+	}
+	if uptimeData.UptimePct24h != 50.0 {
+		t.Errorf("expected 50%% uptime, got %v", uptimeData.UptimePct24h)
+	}
+
+	// 2. User 2 cannot access uptime for User 1's site
+	respUser2 := doAuthRequest(t, http.MethodGet, server.URL+"/api/sites/"+siteID.String()+"/uptime", token2, nil)
+	defer respUser2.Body.Close()
+	if respUser2.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 for User 2 accessing User 1 uptime, got %d", respUser2.StatusCode)
+	}
+
+	// 3. Unauthenticated -> 401
+	respUnauth := doAuthRequest(t, http.MethodGet, server.URL+"/api/sites/"+siteID.String()+"/uptime", "", nil)
+	defer respUnauth.Body.Close()
+	if respUnauth.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 for unauthenticated uptime, got %d", respUnauth.StatusCode)
+	}
+}
+
+func TestDashboardSummaryEndpoint(t *testing.T) {
+	memStore := store.NewMemoryStore()
+	client := api.NewAPIClient(api.WithStore(memStore))
+	defer client.Close()
+	server := httptest.NewServer(client.Handler())
+	defer server.Close()
+
+	token1 := registerAndLogin(t, server.URL, "dashuser1@example.com", "Password123!")
+	token2 := registerAndLogin(t, server.URL, "dashuser2@example.com", "Password123!")
+
+	// User 1 creates 2 sites
+	site1Resp := doAuthRequest(t, http.MethodPost, server.URL+"/api/sites", token1, api.CreateSiteRequest{
+		URL: "https://dashsite1.com",
+	})
+	site1Resp.Body.Close()
+
+	site2Resp := doAuthRequest(t, http.MethodPost, server.URL+"/api/sites", token1, api.CreateSiteRequest{
+		URL: "https://dashsite2.com",
+	})
+	site2Resp.Body.Close()
+
+	// 1. Get dashboard summary for User 1
+	resp := doAuthRequest(t, http.MethodGet, server.URL+"/api/dashboard/summary", token1, nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK on summary, got %d", resp.StatusCode)
+	}
+
+	var summary store.DashboardSummary
+	if err := json.NewDecoder(resp.Body).Decode(&summary); err != nil {
+		t.Fatalf("failed to decode dashboard summary: %v", err)
+	}
+	if summary.TotalSites != 2 {
+		t.Errorf("expected 2 total sites, got %d", summary.TotalSites)
+	}
+	if summary.PendingCount != 2 {
+		t.Errorf("expected 2 pending sites initially, got %d", summary.PendingCount)
+	}
+
+	// 2. User 2 has 0 sites
+	respUser2 := doAuthRequest(t, http.MethodGet, server.URL+"/api/dashboard/summary", token2, nil)
+	defer respUser2.Body.Close()
+	var summaryUser2 store.DashboardSummary
+	_ = json.NewDecoder(respUser2.Body).Decode(&summaryUser2)
+	if summaryUser2.TotalSites != 0 {
+		t.Errorf("expected 0 sites for user 2, got %d", summaryUser2.TotalSites)
+	}
+
+	// 3. Unauthenticated -> 401
+	respUnauth := doAuthRequest(t, http.MethodGet, server.URL+"/api/dashboard/summary", "", nil)
+	defer respUnauth.Body.Close()
+	if respUnauth.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 for unauthenticated summary, got %d", respUnauth.StatusCode)
+	}
+}
+
