@@ -8,36 +8,56 @@ services:
       POSTGRES_PASSWORD: password
     volumes:
       - db_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d web_monitor_db"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 2s
 
   backend:
     build:
       context: ./app/backend
+    restart: always
     ports:
       - "8080:8080"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     environment:
-      DATABASE_URL: postgres://user:password@db:5432/web_monitor_db
+      DATABASE_URL: postgres://user:password@db:5432/web_monitor_db?sslmode=disable
+      PG_URL: postgres://user:password@db:5432/web_monitor_db?sslmode=disable
     entrypoint: sh -c "cd /app/backend && make migrate-up && /app/backend/bin/api"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/health || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
 
   worker:
     build:
       context: ./app/backend
     restart: always
     depends_on:
-      - db
-      - backend
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
     environment:
-      DATABASE_URL: postgres://user:password@db:5432/web_monitor_db
+      DATABASE_URL: postgres://user:password@db:5432/web_monitor_db?sslmode=disable
+      PG_URL: postgres://user:password@db:5432/web_monitor_db?sslmode=disable
     entrypoint: sh -c "cd /app/backend && /app/backend/bin/worker"
 
   frontend:
     build:
       context: ./app/frontend
+    restart: always
     ports:
       - "8081:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   db_data:

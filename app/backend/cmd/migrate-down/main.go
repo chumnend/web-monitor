@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -22,17 +23,29 @@ func main() {
 	// PG_URL is expected to be set as an environment variable (either from .env or Dockerfile/system)
 	pgURL := os.Getenv("PG_URL")
 	if pgURL == "" {
-		log.Fatal("PG_URL not set as environment variable. Please set it in .env or Dockerfile.")
+		pgURL = os.Getenv("DATABASE_URL")
+	}
+	if pgURL == "" {
+		log.Fatal("PG_URL or DATABASE_URL not set as environment variable. Please set it in .env or Dockerfile.")
 	}
 
 	migrationsPath := "./migrations"
 
-	m, err := migrate.New(
-		"file://"+migrationsPath,
-		pgURL,
-	)
-	if err != nil {
-		log.Fatalf("Could not create migrate instance: %v", err)
+	var m *migrate.Migrate
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		m, err = migrate.New(
+			"file://"+migrationsPath,
+			pgURL,
+		)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			log.Fatalf("Could not create migrate instance after retrying: %v", err)
+		}
+		log.Printf("Database not ready for migrations yet (%v); retrying in 1s...", err)
+		time.Sleep(1 * time.Second)
 	}
 
 	if err = m.Down(); err != nil && err != migrate.ErrNoChange {

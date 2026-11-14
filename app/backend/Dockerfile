@@ -2,9 +2,9 @@ FROM golang:1.27-alpine
 
 WORKDIR /app/backend
 
-COPY go.mod .
+COPY go.mod go.sum ./
 
-RUN go mod tidy
+RUN go mod download
 
 COPY . .
 

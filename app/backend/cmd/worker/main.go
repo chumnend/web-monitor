@@ -34,9 +34,18 @@ func main() {
 		}
 		defer db.Close()
 
-		if err := db.Ping(); err != nil {
-			log.Fatalf("Failed to ping database: %v", err)
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			if err = db.Ping(); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				log.Fatalf("Failed to ping database after retrying: %v", err)
+			}
+			log.Printf("Database not ready yet (%v); retrying in 1s...", err)
+			time.Sleep(1 * time.Second)
 		}
+
 		log.Println("Worker connected to PostgreSQL successfully.")
 		dataStore = store.NewPostgresStore(db)
 	} else {
