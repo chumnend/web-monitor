@@ -10,6 +10,11 @@ Web monitor is a web application for tracking the status of websites.
 
 2) API is deployed on port localhost:8080, Web App is deployed on port localhost:8081
 
+## Documentation
+
+- [API Reference & Usage Guide](docs/API.md)
+- [Technical Specification](docs/SPEC.md)
+
 ## Contact
 
 Nicholas Chumney - [nicholas.chumney@outlook.com](nicholas.chumney@outlook.com)
