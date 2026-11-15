@@ -2,13 +2,42 @@
 
 ## About
 
-Web monitor is a web application for tracking the status of websites.
+**Web Monitor** is a full-stack web application designed to monitor websites and services in real-time, providing clear visibility into uptime and availability.
+
+## Prerequisites
+
+Before getting started, make sure you have the following installed on your system:
+- [Docker](https://docs.docker.com/get-docker/) & [Docker Compose](https://docs.docker.com/compose/)
+- [Node.js](https://nodejs.org/) & [Yarn](https://yarnpkg.com/) (only required if running the frontend locally for development)
 
 ## Getting Started
 
-1) Use `make up` to use Docker Compose to launch services
+### Option 1: Quick Start with Docker (Recommended)
 
-2) API is deployed on port localhost:8080, Web App is deployed on port localhost:8081
+Launch all services,
+
+```
+make up
+```
+
+### Option 2: Local Development
+
+Run the backend,
+
+```
+cd app/backend
+cp .env.example .env
+# Edit .env and configure your environment variables
+make
+```
+
+Run the frontend,
+
+```
+cd app/frontend
+yarn install
+yarn dev
+```
 
 ## Documentation
 
