@@ -4,12 +4,12 @@ interface MessageResponse {
   message: string;
 }
 
-function App() {
+const App = () => {
   const [data, setData] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
-    fetch('http://localhost:8080/api/message')
+    fetch('http://localhost:8080/api/health')
       .then((res) => {
         if (!res.ok) throw new Error('Network response was not ok');
         return res.json() as Promise<MessageResponse>;
